@@ -2939,6 +2939,17 @@ describe("ClineProvider", () => {
 			])
 		})
 	})
+
+	test("includes frame-src in the production webview CSP", async () => {
+		await provider.resolveWebviewView(mockWebviewView)
+
+		const html = String(mockWebviewView.webview.html)
+
+		expect(html).toContain("frame-src vscode-webview://test-csp-source")
+		// Must not weaken script-src: production keeps nonce + strict-dynamic, no unsafe-inline.
+		expect(html).toContain("'strict-dynamic'")
+		expect(html).not.toContain("script-src 'unsafe-inline'")
+	})
 })
 
 describe("webviewMessageHandler no-floating-promises coverage", () => {
