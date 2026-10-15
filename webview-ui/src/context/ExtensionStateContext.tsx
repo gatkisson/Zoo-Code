@@ -99,6 +99,8 @@ export interface ExtensionStateContextType extends ExtensionState {
 	setTerminalOutputPreviewSize: (value: "small" | "medium" | "large") => void
 	mcpEnabled: boolean
 	setMcpEnabled: (value: boolean) => void
+	mcpAppsEnabled: boolean
+	setMcpAppsEnabled: (value: boolean) => void
 	taskSyncEnabled: boolean
 	setTaskSyncEnabled: (value: boolean) => void
 	setCurrentApiConfigName: (value: string) => void
@@ -218,6 +220,7 @@ const createInitialExtensionState = (): ExtensionState => ({
 	diffFuzzyThreshold: DEFAULT_DIFF_FUZZY_THRESHOLD,
 	terminalShellIntegrationTimeout: 4000,
 	mcpEnabled: true,
+	mcpAppsEnabled: false,
 	taskSyncEnabled: false,
 	currentApiConfigName: "default",
 	listApiConfigMeta: [],
@@ -593,6 +596,7 @@ export const ExtensionStateContextProvider: React.FC<{
 			setState((prevState) => ({ ...prevState, terminalShellIntegrationDisabled: value })),
 		setTerminalZdotdir: (value) => setState((prevState) => ({ ...prevState, terminalZdotdir: value })),
 		setMcpEnabled: (value) => setState((prevState) => ({ ...prevState, mcpEnabled: value })),
+		setMcpAppsEnabled: (value) => setState((prevState) => ({ ...prevState, mcpAppsEnabled: value })),
 		setTaskSyncEnabled: (value) => setState((prevState) => ({ ...prevState, taskSyncEnabled: value }) as any),
 		setCurrentApiConfigName: (value) => setState((prevState) => ({ ...prevState, currentApiConfigName: value })),
 		setListApiConfigMeta,

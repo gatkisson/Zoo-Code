@@ -283,6 +283,7 @@ describe("SettingsView - Unsaved Changes Detection", () => {
 		maxOpenTabsContext: 10,
 		maxWorkspaceFiles: 200,
 		mcpEnabled: false,
+		mcpAppsEnabled: false,
 		soundEnabled: false,
 		ttsEnabled: false,
 		ttsSpeed: 1.0,

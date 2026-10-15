@@ -1240,6 +1240,36 @@ describe("webviewMessageHandler - mcpEnabled", () => {
 	})
 })
 
+describe("webviewMessageHandler - mcpAppsEnabled", () => {
+	let mockMcpHub: {
+		handleMcpEnabledChange: ReturnType<typeof vi.fn>
+		refreshAllConnections: ReturnType<typeof vi.fn>
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+
+		// Create a mock McpHub instance
+		mockMcpHub = {
+			handleMcpEnabledChange: vi.fn().mockResolvedValue(undefined),
+			refreshAllConnections: vi.fn().mockResolvedValue(undefined),
+		}
+
+		// Ensure provider exposes getMcpHub and returns our mock
+		mockClineProvider.getMcpHub = vi.fn().mockReturnValue(mockMcpHub)
+	})
+
+	it("refreshes MCP connections when mcpAppsEnabled changes", async () => {
+		await webviewMessageHandler(mockClineProvider, {
+			type: "updateSettings",
+			updatedSettings: { mcpAppsEnabled: true },
+		})
+
+		expect(mockMcpHub.refreshAllConnections).toHaveBeenCalledTimes(1)
+		expect(mockClineProvider.postStateToWebview).toHaveBeenCalledTimes(1)
+	})
+})
+
 describe("webviewMessageHandler - destructiveCommandGuardEnabled", () => {
 	beforeEach(() => {
 		vi.clearAllMocks()

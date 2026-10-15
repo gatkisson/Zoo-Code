@@ -406,6 +406,7 @@ describe("mergeExtensionState", () => {
 		const baseState: ExtensionState = {
 			version: "",
 			mcpEnabled: false,
+			mcpAppsEnabled: false,
 			clineMessages: [],
 			taskHistory: [],
 			shouldShowAnnouncement: false,
@@ -476,6 +477,7 @@ describe("mergeExtensionState", () => {
 		const baseState: ExtensionState = {
 			version: "",
 			mcpEnabled: false,
+			mcpAppsEnabled: false,
 			clineMessages: [],
 			taskHistory: [],
 			shouldShowAnnouncement: false,

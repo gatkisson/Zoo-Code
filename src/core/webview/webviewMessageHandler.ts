@@ -840,6 +840,15 @@ export const webviewMessageHandler = async (
 						if (mcpHub) {
 							await mcpHub.handleMcpEnabledChange(newValue as boolean)
 						}
+					} else if (key === "mcpAppsEnabled") {
+						newValue = value ?? false
+						// Capabilities are negotiated at connect time; refresh connections so
+						// servers see the io.modelcontextprotocol/ui capability change immediately.
+						const mcpHub = provider.getMcpHub()
+
+						if (mcpHub) {
+							await mcpHub.refreshAllConnections()
+						}
 					} else if (key === "experiments") {
 						if (!value) {
 							continue

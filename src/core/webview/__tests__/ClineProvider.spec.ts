@@ -726,6 +726,7 @@ describe("ClineProvider", () => {
 			enableCheckpoints: false,
 			writeDelayMs: 1000,
 			mcpEnabled: true,
+			mcpAppsEnabled: false,
 			mode: defaultModeSlug,
 			customModes: [],
 			experiments: experimentDefault,
@@ -1775,6 +1776,20 @@ describe("ClineProvider", () => {
 			expect(state.autoCloseZooOpenedFilesAfterUserEdited).toBe(true)
 			expect(state.autoCloseZooOpenedNewFiles).toBe(true)
 		})
+	})
+
+	test("returns mcpAppsEnabled in state posted to webview, defaulting to false", async () => {
+		await provider.resolveWebviewView(mockWebviewView)
+
+		// Same partial-state-mock pattern as the existing "handles mcpEnabled setting correctly" test.
+		type ProviderState = Awaited<ReturnType<ClineProvider["getState"]>>
+		vi.spyOn(provider, "getState").mockResolvedValueOnce({ mcpAppsEnabled: true } as unknown as ProviderState)
+		let state = await provider.getStateToPostToWebview()
+		expect(state.mcpAppsEnabled).toBe(true)
+
+		vi.spyOn(provider, "getState").mockResolvedValueOnce({} as unknown as ProviderState)
+		state = await provider.getStateToPostToWebview()
+		expect(state.mcpAppsEnabled).toBe(false)
 	})
 
 	it("getStateToPostToWebview passes through defined diffFuzzyThreshold value", async () => {

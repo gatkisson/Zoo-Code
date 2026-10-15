@@ -26,19 +26,33 @@ import { SectionHeader } from "@src/components/settings/SectionHeader"
 import McpToolRow from "./McpToolRow"
 import McpResourceRow from "./McpResourceRow"
 import McpEnabledToggle from "./McpEnabledToggle"
+import McpAppsToggle from "./McpAppsToggle"
 import { McpErrorRow } from "./McpErrorRow"
 
 interface McpViewProps {
 	mcpEnabled?: boolean
 	setMcpEnabled?: (value: boolean) => void
+	mcpAppsEnabled?: boolean
+	setMcpAppsEnabled?: (value: boolean) => void
 }
 
-const McpView = ({ mcpEnabled: propsMcpEnabled, setMcpEnabled }: McpViewProps = {}) => {
-	const { mcpServers: servers, alwaysAllowMcp, mcpEnabled: contextMcpEnabled } = useExtensionState()
+const McpView = ({
+	mcpEnabled: propsMcpEnabled,
+	setMcpEnabled,
+	mcpAppsEnabled: propsMcpAppsEnabled,
+	setMcpAppsEnabled,
+}: McpViewProps = {}) => {
+	const {
+		mcpServers: servers,
+		alwaysAllowMcp,
+		mcpEnabled: contextMcpEnabled,
+		mcpAppsEnabled: contextMcpAppsEnabled,
+	} = useExtensionState()
 
 	// When rendered inside SettingsView the value is buffered in `cachedState` and
 	// only persisted on Save. Fall back to live extension state when used uncontrolled.
 	const mcpEnabled = propsMcpEnabled ?? contextMcpEnabled
+	const mcpAppsEnabled = propsMcpAppsEnabled ?? contextMcpAppsEnabled
 
 	const { t } = useAppTranslation()
 	const { isOverThreshold, title, message } = useTooManyTools()
@@ -65,6 +79,9 @@ const McpView = ({ mcpEnabled: propsMcpEnabled, setMcpEnabled }: McpViewProps = 
 				</div>
 
 				<McpEnabledToggle mcpEnabled={mcpEnabled} setMcpEnabled={setMcpEnabled} />
+
+				{/* Rendered outside the mcpEnabled block so users can pre-enable MCP Apps. */}
+				<McpAppsToggle mcpAppsEnabled={mcpAppsEnabled} setMcpAppsEnabled={setMcpAppsEnabled} />
 
 				{mcpEnabled && (
 					<>

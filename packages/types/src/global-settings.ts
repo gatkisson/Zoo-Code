@@ -49,6 +49,8 @@ export const DEFAULT_DIFF_FUZZY_THRESHOLD = 1.0
 
 export const DEFAULT_DESTRUCTIVE_COMMAND_GUARD_ENABLED = false
 
+export const DEFAULT_MCP_APPS_ENABLED = false
+
 /**
  * Terminal output preview size options for persisted command output.
  *
@@ -242,6 +244,11 @@ export const globalSettingsSchema = z.object({
 	telemetrySetting: telemetrySettingsSchema.optional(),
 
 	mcpEnabled: z.boolean().optional(),
+	/**
+	 * Opt-in rendering of MCP Apps interactive UIs (untrusted third-party HTML).
+	 * @default false
+	 */
+	mcpAppsEnabled: z.boolean().optional(),
 
 	mode: z.string().optional(),
 	modeApiConfigs: z.record(z.string(), z.string()).optional(),
