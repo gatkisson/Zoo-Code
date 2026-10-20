@@ -1291,6 +1291,44 @@ describe("webviewMessageHandler - mcpAppsEnabled", () => {
 	})
 })
 
+describe("webviewMessageHandler - toggleMcpServerUi", () => {
+	let mockMcpHub: { toggleServerUi: ReturnType<typeof vi.fn> }
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+
+		mockMcpHub = { toggleServerUi: vi.fn().mockResolvedValue(undefined) }
+		mockClineProvider.getMcpHub = vi.fn().mockReturnValue(mockMcpHub)
+	})
+
+	it("delegates the per-server UI toggle to McpHub", async () => {
+		await webviewMessageHandler(mockClineProvider, {
+			type: "toggleMcpServerUi",
+			serverName: "test-server",
+			source: "project",
+			isEnabled: false,
+		})
+
+		expect(mockMcpHub.toggleServerUi).toHaveBeenCalledWith("test-server", "project", false)
+	})
+
+	it("logs instead of throwing when the per-server UI toggle fails", async () => {
+		mockMcpHub.toggleServerUi.mockRejectedValue(new Error("server not found"))
+
+		await webviewMessageHandler(mockClineProvider, {
+			type: "toggleMcpServerUi",
+			serverName: "test-server",
+			source: "global",
+			isEnabled: true,
+		})
+
+		expect(mockMcpHub.toggleServerUi).toHaveBeenCalledWith("test-server", "global", true)
+		expect(mockClineProvider.log).toHaveBeenCalledWith(
+			expect.stringContaining("Failed to toggle UI for MCP server test-server"),
+		)
+	})
+})
+
 describe("webviewMessageHandler - destructiveCommandGuardEnabled", () => {
 	beforeEach(() => {
 		vi.clearAllMocks()

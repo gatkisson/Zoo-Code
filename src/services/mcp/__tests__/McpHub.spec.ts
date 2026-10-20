@@ -1479,6 +1479,50 @@ describe("McpHub", () => {
 			expect(writtenConfig.mcpServers["test-server"].disabled).toBe(true)
 		})
 
+		it("accepts disableUi in the server config schema", () => {
+			const parsed = ServerConfigSchema.parse({ command: "node", disableUi: true })
+			expect(parsed.disableUi).toBe(true)
+			expect(ServerConfigSchema.parse({ command: "node" }).disableUi).toBeUndefined()
+		})
+
+		it("should persist the inverse of enabled when toggling server UI", async () => {
+			const mockConfig = {
+				mcpServers: {
+					"test-server": {
+						type: "stdio",
+						command: "node",
+						args: ["test.js"],
+						disabled: false,
+					},
+				},
+			}
+
+			// Every read (the config update and the in-memory refresh) sees the same on-disk config.
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(mockConfig))
+
+			// Set up mock connection (UI gating is re-checked per request, so no live client needed)
+			const mockConnection: DisconnectedMcpConnection = {
+				type: "disconnected",
+				server: {
+					name: "test-server",
+					config: JSON.stringify(mockConfig.mcpServers["test-server"]),
+					status: "disconnected",
+					source: "global",
+				},
+				client: null,
+				transport: null,
+			}
+			mcpHub.connections = [mockConnection]
+
+			await mcpHub.toggleServerUi("test-server", "global", false)
+
+			expect(safeWriteJson).toHaveBeenCalled()
+			const written = vi.mocked(safeWriteJson).mock.calls.at(-1)?.[1] as {
+				mcpServers: Record<string, { disableUi?: boolean }>
+			}
+			expect(written.mcpServers["test-server"].disableUi).toBe(true)
+		})
+
 		it("should filter out disabled servers from getServers", () => {
 			const mockConnections: McpConnection[] = [
 				{

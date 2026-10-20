@@ -2,6 +2,7 @@ import React, { useState } from "react"
 import { Trans } from "react-i18next"
 import { VSCodeLink, VSCodePanels, VSCodePanelTab, VSCodePanelView } from "@vscode/webview-ui-toolkit/react"
 
+import { isMcpServerUiDisabled } from "@roo-code/types"
 import type { McpServer } from "@roo-code/types"
 
 import { vscode } from "@src/utils/vscode"
@@ -363,6 +364,23 @@ const ServerRow = ({ server, alwaysAllowMcp }: { server: McpServer; alwaysAllowM
 								fontSize: "13px",
 								borderRadius: "0 0 4px 4px",
 							}}>
+							<div className="flex items-center justify-between py-1">
+								<span>{t("mcp:serverRow.disableUi")}</span>
+								<ToggleSwitch
+									checked={!isMcpServerUiDisabled(server)}
+									onChange={() => {
+										vscode.postMessage({
+											type: "toggleMcpServerUi",
+											serverName: server.name,
+											source: server.source || "global",
+											// The switch flips its current state, so the new enabled value is the inverse of `checked`.
+											isEnabled: isMcpServerUiDisabled(server),
+										})
+									}}
+									size="medium"
+									aria-label={`Toggle UI for ${server.name} server`}
+								/>
+							</div>
 							<VSCodePanels style={{ marginBottom: "10px" }}>
 								<VSCodePanelTab id="tools">
 									{t("mcp:tabs.tools")} ({server.tools?.length || 0})

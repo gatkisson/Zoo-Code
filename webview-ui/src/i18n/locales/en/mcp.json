@@ -12,6 +12,9 @@
 		"title": "Enable MCP Apps UIs",
 		"description": "Render interactive tool UIs provided by MCP servers in chat. Runs untrusted HTML from servers in a sandboxed frame."
 	},
+	"serverRow": {
+		"disableUi": "Disable interactive UIs for this server"
+	},
 	"editGlobalMCP": "Edit Global MCP",
 	"editProjectMCP": "Edit Project MCP",
 	"refreshMCP": "Refresh MCP Servers",

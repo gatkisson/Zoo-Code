@@ -75,6 +75,8 @@ const BaseConfigSchema = z.object({
 	alwaysAllow: z.array(z.string()).default([]),
 	watchPaths: z.array(z.string()).optional(), // paths to watch for changes and restart server
 	disabledTools: z.array(z.string()).default([]),
+	// Opt this server out of MCP Apps UI rendering (see docs/architecture/mcp-apps-ui-support.md).
+	disableUi: z.boolean().optional(),
 })
 
 // Custom error messages for better user feedback
@@ -1966,6 +1968,29 @@ export class McpHub {
 			this.showErrorMessage(`Failed to update server ${serverName} state`, error)
 			throw error
 		}
+	}
+
+	/**
+	 * Persist the per-server `disableUi` flag and keep the in-memory config
+	 * string fresh so host-side re-validation (handleMcpAppRequest) sees it.
+	 */
+	public async toggleServerUi(serverName: string, source: "global" | "project", enabled: boolean): Promise<void> {
+		const connection = this.findConnection(serverName, source)
+		if (!connection) {
+			throw new Error(`Server ${serverName}${source ? ` with source ${source}` : ""} not found`)
+		}
+
+		const serverSource = connection.server.source || "global"
+		await this.updateServerConfig(serverName, { disableUi: !enabled }, serverSource)
+
+		try {
+			const updatedConfig = await this.readServerConfigFromFile(serverName, serverSource)
+			connection.server.config = JSON.stringify(updatedConfig)
+		} catch (error) {
+			console.error(`Failed to refresh in-memory config for ${serverName}:`, error)
+		}
+
+		await this.notifyWebviewOfServerChanges()
 	}
 
 	/**

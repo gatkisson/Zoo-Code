@@ -1841,6 +1841,22 @@ export const webviewMessageHandler = async (
 			}
 			break
 		}
+		case "toggleMcpServerUi": {
+			try {
+				await provider
+					.getMcpHub()
+					?.toggleServerUi(
+						message.serverName!,
+						message.source as "global" | "project",
+						Boolean(message.isEnabled),
+					)
+			} catch (error) {
+				provider.log(
+					`Failed to toggle UI for MCP server ${message.serverName}: ${JSON.stringify(error, Object.getOwnPropertyNames(error), 2)}`,
+				)
+			}
+			break
+		}
 		case "taskSyncEnabled":
 			provider.log("Ignoring taskSyncEnabled update because cloud task sync is disabled")
 			break

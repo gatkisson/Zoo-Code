@@ -521,6 +521,7 @@ export interface WebviewMessage {
 		| "toggleToolAlwaysAllow"
 		| "toggleToolEnabledForPrompt"
 		| "toggleMcpServer"
+		| "toggleMcpServerUi"
 		| "updateMcpTimeout"
 		| "enhancePrompt"
 		| "enhancedPrompt"
