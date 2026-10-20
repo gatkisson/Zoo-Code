@@ -445,16 +445,22 @@ In [`webviewMessageHandler.ts`](../../../src/core/webview/webviewMessageHandler.
 
 ```typescript
 					} else if (key === "mcpAppsEnabled") {
+						const previousValue = getGlobalState("mcpAppsEnabled") ?? DEFAULT_MCP_APPS_ENABLED
 						newValue = value ?? false
-						// Capabilities are negotiated at connect time; refresh connections so
-						// servers see the io.modelcontextprotocol/ui capability change immediately.
-						const mcpHub = provider.getMcpHub()
 
-						if (mcpHub) {
-							await mcpHub.refreshAllConnections()
+						// Capabilities are negotiated at connect time; refresh connections only when
+						// the value actually changed so unrelated settings saves don't reconnect servers.
+						if (newValue !== previousValue) {
+							const mcpHub = provider.getMcpHub()
+
+							if (mcpHub) {
+								await mcpHub.refreshAllConnections()
+							}
 						}
 					} else if (key === "experiments") {
 ```
+
+> **Amendment (2026-10-20, Task 3 review round):** the toggle must follow the `McpEnabledToggle` Save/Discard contract — controlled usage buffers via the setter prop only (no `postMessage`, no live-state write); the handler refreshes connections only when the value actually changed (`terminalProfile` precedent), because `handleSubmit` posts the full settings payload on every save. `mcpEnabled`'s pre-existing unconditional reconnect is out of scope.
 
 - [ ] **Step 4: Run host tests to verify they pass**
 
@@ -490,7 +496,7 @@ vi.mock("react-i18next", () => ({
 }))
 
 describe("McpAppsToggle", () => {
-	it("renders the controlled value and posts updateSettings on change", async () => {
+	it("buffers via the setter prop without persisting before Save when controlled", async () => {
 		const setMcpAppsEnabled = vi.fn()
 		const { getByRole } = render(<McpAppsToggle mcpAppsEnabled={true} setMcpAppsEnabled={setMcpAppsEnabled} />)
 
@@ -499,11 +505,10 @@ describe("McpAppsToggle", () => {
 
 		await userEvent.click(checkbox)
 
+		// Controlled (SettingsView) must buffer in cachedState: no persistence, no live-state write.
 		expect(setMcpAppsEnabled).toHaveBeenCalledWith(false)
-		expect(vscode.postMessage).toHaveBeenCalledWith({
-			type: "updateSettings",
-			updatedSettings: { mcpAppsEnabled: false },
-		})
+		expect(vscode.postMessage).not.toHaveBeenCalled()
+		expect(contextSetMcpAppsEnabled).not.toHaveBeenCalled()
 	})
 })
 ```
@@ -538,9 +543,13 @@ const McpAppsToggle = ({
 
 	const handleChange = (e: Event) => {
 		const target = e.target as HTMLInputElement
-		propsSetMcpAppsEnabled?.(target.checked)
-		contextSetMcpAppsEnabled(target.checked)
-		vscode.postMessage({ type: "updateSettings", updatedSettings: { mcpAppsEnabled: target.checked } })
+
+		if (propsSetMcpAppsEnabled) {
+			propsSetMcpAppsEnabled(target.checked)
+		} else {
+			contextSetMcpAppsEnabled(target.checked)
+			vscode.postMessage({ type: "updateSettings", updatedSettings: { mcpAppsEnabled: target.checked } })
+		}
 	}
 
 	return (
