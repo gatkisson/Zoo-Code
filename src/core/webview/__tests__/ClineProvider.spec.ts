@@ -1782,6 +1782,8 @@ describe("ClineProvider", () => {
 		await provider.resolveWebviewView(mockWebviewView)
 
 		// Same partial-state-mock pattern as the existing "handles mcpEnabled setting correctly" test.
+		// ProviderState carries dozens of required fields; getStateToPostToWebview only reads the
+		// ones it destructures, so the double is kept minimal via `unknown` (last-resort cast).
 		type ProviderState = Awaited<ReturnType<ClineProvider["getState"]>>
 		vi.spyOn(provider, "getState").mockResolvedValueOnce({ mcpAppsEnabled: true } as unknown as ProviderState)
 		let state = await provider.getStateToPostToWebview()

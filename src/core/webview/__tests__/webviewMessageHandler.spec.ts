@@ -1260,13 +1260,34 @@ describe("webviewMessageHandler - mcpAppsEnabled", () => {
 	})
 
 	it("refreshes MCP connections when mcpAppsEnabled changes", async () => {
+		vi.mocked(mockClineProvider.contextProxy.getValue).mockImplementation((key: string) =>
+			key === "mcpAppsEnabled" ? false : undefined,
+		)
+
 		await webviewMessageHandler(mockClineProvider, {
 			type: "updateSettings",
 			updatedSettings: { mcpAppsEnabled: true },
 		})
 
 		expect(mockMcpHub.refreshAllConnections).toHaveBeenCalledTimes(1)
+		expect(mockClineProvider.contextProxy.setValue).toHaveBeenCalledWith("mcpAppsEnabled", true)
 		expect(mockClineProvider.postStateToWebview).toHaveBeenCalledTimes(1)
+	})
+
+	it("does not refresh MCP connections when mcpAppsEnabled is unchanged", async () => {
+		// handleSubmit posts the full settings payload on every save; an unrelated
+		// save must not reconnect all servers when the value did not change.
+		vi.mocked(mockClineProvider.contextProxy.getValue).mockImplementation((key: string) =>
+			key === "mcpAppsEnabled" ? true : undefined,
+		)
+
+		await webviewMessageHandler(mockClineProvider, {
+			type: "updateSettings",
+			updatedSettings: { mcpAppsEnabled: true },
+		})
+
+		expect(mockMcpHub.refreshAllConnections).not.toHaveBeenCalled()
+		expect(mockClineProvider.contextProxy.setValue).toHaveBeenCalledWith("mcpAppsEnabled", true)
 	})
 })
 

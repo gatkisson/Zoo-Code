@@ -30,6 +30,7 @@ import {
 	RouterModelsMessageType,
 	VsCodeLmModelsMessageType,
 	isTelemetryOptedIn,
+	DEFAULT_MCP_APPS_ENABLED,
 } from "@roo-code/types"
 import { customToolRegistry } from "@roo-code/core"
 import { CloudService } from "@roo-code/cloud"
@@ -841,13 +842,17 @@ export const webviewMessageHandler = async (
 							await mcpHub.handleMcpEnabledChange(newValue as boolean)
 						}
 					} else if (key === "mcpAppsEnabled") {
+						const previousValue = getGlobalState("mcpAppsEnabled") ?? DEFAULT_MCP_APPS_ENABLED
 						newValue = value ?? false
-						// Capabilities are negotiated at connect time; refresh connections so
-						// servers see the io.modelcontextprotocol/ui capability change immediately.
-						const mcpHub = provider.getMcpHub()
 
-						if (mcpHub) {
-							await mcpHub.refreshAllConnections()
+						// Capabilities are negotiated at connect time; refresh connections only when
+						// the value actually changed so unrelated settings saves don't reconnect servers.
+						if (newValue !== previousValue) {
+							const mcpHub = provider.getMcpHub()
+
+							if (mcpHub) {
+								await mcpHub.refreshAllConnections()
+							}
 						}
 					} else if (key === "experiments") {
 						if (!value) {

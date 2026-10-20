@@ -27,12 +27,13 @@ vi.mock("@src/context/ExtensionStateContext", () => ({
 
 const getCheckbox = () => screen.getByRole("checkbox")
 
-describe("McpAppsToggle", () => {
+describe("McpAppsToggle - Save/Discard contract", () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
 	})
 
-	it("renders the controlled value and posts updateSettings on change", async () => {
+	// Controlled (inside SettingsView) must buffer in cachedState, not persist before Save.
+	it("buffers via the setter prop without persisting before Save when controlled", async () => {
 		const setMcpAppsEnabled = vi.fn()
 		render(<McpAppsToggle mcpAppsEnabled={true} setMcpAppsEnabled={setMcpAppsEnabled} />)
 
@@ -42,10 +43,9 @@ describe("McpAppsToggle", () => {
 		await userEvent.click(checkbox)
 
 		expect(setMcpAppsEnabled).toHaveBeenCalledWith(false)
-		expect(vscode.postMessage).toHaveBeenCalledWith({
-			type: "updateSettings",
-			updatedSettings: { mcpAppsEnabled: false },
-		})
+		expect(vscode.postMessage).not.toHaveBeenCalled()
+		// Must not touch live extension state either.
+		expect(contextSetMcpAppsEnabled).not.toHaveBeenCalled()
 	})
 
 	it("persists immediately via live state when used uncontrolled", async () => {

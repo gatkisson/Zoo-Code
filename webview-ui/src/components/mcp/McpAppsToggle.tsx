@@ -28,9 +28,12 @@ const McpAppsToggle = ({
 			return
 		}
 
-		propsSetMcpAppsEnabled?.(target.checked)
-		contextSetMcpAppsEnabled(target.checked)
-		vscode.postMessage({ type: "updateSettings", updatedSettings: { mcpAppsEnabled: target.checked } })
+		if (propsSetMcpAppsEnabled) {
+			propsSetMcpAppsEnabled(target.checked)
+		} else {
+			contextSetMcpAppsEnabled(target.checked)
+			vscode.postMessage({ type: "updateSettings", updatedSettings: { mcpAppsEnabled: target.checked } })
+		}
 	}
 
 	return (
