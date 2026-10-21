@@ -3272,4 +3272,89 @@ describe("McpHub", () => {
 			}
 		})
 	})
+
+	describe("handleMcpAppRequest", () => {
+		// Seed a server connection whose config JSON drives the disableUi check.
+		// The disconnected arm is used deliberately: handleMcpAppRequest never inspects
+		// connection.type (readResource/callTool enforce that and are spied here), and
+		// this keeps the double fully typed instead of adding `as any` suppressions.
+		const seedServerConnection = (name: string, config: Record<string, unknown> = {}) => {
+			mcpHub.connections = [
+				{
+					type: "disconnected",
+					server: {
+						name,
+						config: JSON.stringify(config),
+						status: "disconnected",
+					},
+					client: null,
+					transport: null,
+				},
+			]
+		}
+
+		it("handleMcpAppRequest routes resources/read to readResource", async () => {
+			seedServerConnection("test-server")
+			mockProvider.getState = vi.fn().mockResolvedValue({ mcpEnabled: true, mcpAppsEnabled: true })
+			const readSpy = vi.spyOn(mcpHub, "readResource").mockResolvedValue({
+				contents: [{ uri: "ui://demo/card", mimeType: "text/html;profile=mcp-app", text: "<html></html>" }],
+			})
+
+			const response = await mcpHub.handleMcpAppRequest({
+				requestId: "r1",
+				serverName: "test-server",
+				method: "resources/read",
+				params: { uri: "ui://demo/card" },
+			})
+
+			expect(readSpy).toHaveBeenCalledWith("test-server", "ui://demo/card", undefined)
+			expect(response.ok).toBe(true)
+		})
+
+		it("handleMcpAppRequest rejects oversized payloads with -32001 without returning content", async () => {
+			seedServerConnection("test-server")
+			mockProvider.getState = vi.fn().mockResolvedValue({ mcpEnabled: true, mcpAppsEnabled: true })
+			vi.spyOn(mcpHub, "readResource").mockResolvedValue({
+				contents: [{ uri: "ui://demo/big", text: "x".repeat(3 * 1024 * 1024) }],
+			})
+
+			const response = await mcpHub.handleMcpAppRequest({
+				requestId: "r2",
+				serverName: "test-server",
+				method: "resources/read",
+				params: { uri: "ui://demo/big" },
+			})
+
+			expect(response).toMatchObject({ ok: false, error: { code: -32001 } })
+		})
+
+		it("handleMcpAppRequest rejects when the server config sets disableUi", async () => {
+			seedServerConnection("ui-disabled-server", { disableUi: true })
+			mockProvider.getState = vi.fn().mockResolvedValue({ mcpEnabled: true, mcpAppsEnabled: true })
+
+			const response = await mcpHub.handleMcpAppRequest({
+				requestId: "r3",
+				serverName: "ui-disabled-server",
+				method: "tools/call",
+				params: { name: "anything" },
+			})
+
+			expect(response).toMatchObject({ ok: false, error: { code: -32004 } })
+		})
+
+		it("handleMcpAppRequest converts execution failures to -32603 responses", async () => {
+			seedServerConnection("test-server")
+			mockProvider.getState = vi.fn().mockResolvedValue({ mcpEnabled: true, mcpAppsEnabled: true })
+			vi.spyOn(mcpHub, "callTool").mockRejectedValue(new Error("boom"))
+
+			const response = await mcpHub.handleMcpAppRequest({
+				requestId: "r4",
+				serverName: "test-server",
+				method: "tools/call",
+				params: { name: "flaky" },
+			})
+
+			expect(response).toMatchObject({ ok: false, error: { code: -32603, message: "boom" } })
+		})
+	})
 })

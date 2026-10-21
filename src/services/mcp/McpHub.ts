@@ -27,6 +27,7 @@ import type {
 	McpTool,
 	McpToolCallResponse,
 } from "@roo-code/types"
+import { isMcpServerUiDisabled } from "@roo-code/types"
 
 import { t } from "../../i18n"
 
@@ -43,6 +44,8 @@ import { arePathsEqual, getWorkspacePath } from "../../utils/path"
 import { injectVariables } from "../../utils/config"
 import { safeWriteJson } from "../../utils/safeWriteJson"
 import { sanitizeMcpName, toolNamesMatch } from "../../utils/mcp-name"
+import { MCP_APP_MAX_RESOURCE_BYTES, estimateResourceBytes, validateMcpAppRequest } from "./mcp-app-bridge"
+import type { McpAppRequest, McpAppResponsePayload } from "./mcp-app-bridge"
 
 // Discriminated union for connection states
 export type ConnectedMcpConnection = {
@@ -2345,6 +2348,48 @@ export class McpHub {
 				}
 			}
 			throw error
+		}
+	}
+
+	/**
+	 * Serve a webview-initiated MCP Apps request (Flow 1/2 in
+	 * docs/architecture/mcp-apps-ui-support.md). Re-validates everything the
+	 * webview gate already checked; readResource/callTool additionally enforce
+	 * connection + server-disabled state.
+	 */
+	async handleMcpAppRequest(request: McpAppRequest): Promise<McpAppResponsePayload> {
+		try {
+			const connection = this.findConnection(request.serverName, request.source)
+			const uiDisabled = isMcpServerUiDisabled(connection?.server) || !(await this.isMcpAppsEnabled())
+
+			const validation = validateMcpAppRequest(request, { uiDisabled })
+			if (!validation.ok) {
+				return { ok: false, error: { code: validation.code, message: validation.message } }
+			}
+
+			if (request.method === "resources/read") {
+				const uri = String(request.params?.uri ?? "")
+				const result = await this.readResource(request.serverName, uri, request.source)
+
+				if (estimateResourceBytes(result) > MCP_APP_MAX_RESOURCE_BYTES) {
+					return { ok: false, error: { code: -32001, message: "UI resource exceeds the 2MB size cap" } }
+				}
+
+				return { ok: true, result }
+			}
+
+			const result = await this.callTool(
+				request.serverName,
+				String(request.params?.name ?? ""),
+				request.params?.arguments as Record<string, unknown> | undefined,
+				request.source,
+			)
+			return { ok: true, result }
+		} catch (error) {
+			return {
+				ok: false,
+				error: { code: -32603, message: error instanceof Error ? error.message : String(error) },
+			}
 		}
 	}
 

@@ -1329,6 +1329,47 @@ describe("webviewMessageHandler - toggleMcpServerUi", () => {
 	})
 })
 
+describe("webviewMessageHandler - mcpAppRequest", () => {
+	let mockMcpHub: { handleMcpAppRequest: ReturnType<typeof vi.fn> }
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+
+		mockMcpHub = { handleMcpAppRequest: vi.fn().mockResolvedValue({ ok: true, result: { contents: [] } }) }
+		mockClineProvider.getMcpHub = vi.fn().mockReturnValue(mockMcpHub)
+	})
+
+	it("routes the request to McpHub and posts a correlated mcpAppResponse", async () => {
+		await webviewMessageHandler(mockClineProvider, {
+			type: "mcpAppRequest",
+			requestId: "req-42",
+			serverName: "srv",
+			mcpAppMethod: "resources/read",
+			mcpAppParams: { uri: "ui://demo/card" },
+		})
+
+		expect(mockMcpHub.handleMcpAppRequest).toHaveBeenCalledWith({
+			requestId: "req-42",
+			serverName: "srv",
+			source: undefined,
+			method: "resources/read",
+			params: { uri: "ui://demo/card" },
+		})
+		expect(mockClineProvider.postMessageToWebview).toHaveBeenCalledWith({
+			type: "mcpAppResponse",
+			requestId: "req-42",
+			mcpAppResponse: { ok: true, result: { contents: [] } },
+		})
+	})
+
+	it("ignores requests without a requestId or serverName", async () => {
+		await webviewMessageHandler(mockClineProvider, { type: "mcpAppRequest", mcpAppMethod: "tools/call" })
+
+		expect(mockMcpHub.handleMcpAppRequest).not.toHaveBeenCalled()
+		expect(mockClineProvider.postMessageToWebview).not.toHaveBeenCalled()
+	})
+})
+
 describe("webviewMessageHandler - destructiveCommandGuardEnabled", () => {
 	beforeEach(() => {
 		vi.clearAllMocks()

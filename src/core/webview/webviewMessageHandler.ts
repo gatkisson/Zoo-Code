@@ -1871,6 +1871,28 @@ export const webviewMessageHandler = async (
 			break
 		}
 
+		case "mcpAppRequest": {
+			const mcpHub = provider.getMcpHub()
+
+			if (mcpHub && message.requestId && message.serverName && message.mcpAppMethod) {
+				const response = await mcpHub.handleMcpAppRequest({
+					requestId: message.requestId,
+					serverName: message.serverName,
+					source: message.source,
+					method: message.mcpAppMethod,
+					params: message.mcpAppParams,
+				})
+
+				await provider.postMessageToWebview({
+					type: "mcpAppResponse",
+					requestId: message.requestId,
+					mcpAppResponse: response,
+				})
+			}
+
+			break
+		}
+
 		case "ttsEnabled":
 			const ttsEnabled = message.bool ?? true
 			await updateGlobalState("ttsEnabled", ttsEnabled)

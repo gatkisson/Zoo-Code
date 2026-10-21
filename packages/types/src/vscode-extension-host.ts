@@ -108,6 +108,7 @@ export interface ExtensionMessage {
 		| "fileContent"
 		| "rooHistoryImportProgress"
 		| "themeFixtureProbeRequest"
+		| "mcpAppResponse"
 	text?: string
 	/** For fileContent: { path, content, error? } */
 	fileContent?: { path: string; content: string | null; error?: string }
@@ -155,6 +156,7 @@ export interface ExtensionMessage {
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	values?: Record<string, any>
 	requestId?: string
+	mcpAppResponse?: { ok: true; result: unknown } | { ok: false; error: { code: number; message: string } }
 	themeFixture?: WebviewThemeFixture
 	promptText?: string
 	results?:
@@ -648,6 +650,7 @@ export interface WebviewMessage {
 		| "openRuleFile"
 		| "openRulesDirectory"
 		| "themeFixtureProbeResponse"
+		| "mcpAppRequest"
 	text?: string
 	taskId?: string
 	editedMessageContent?: string
@@ -694,6 +697,8 @@ export interface WebviewMessage {
 	/** Target mode slugs for updateSkillModes */
 	newSkillModeSlugs?: string[] // For updateSkillModes (new mode restrictions)
 	requestId?: string
+	mcpAppMethod?: string // For mcpAppRequest: proxied MCP method ("resources/read" | "tools/call")
+	mcpAppParams?: Record<string, unknown> // For mcpAppRequest: JSON-RPC params
 	themeFixture?: WebviewThemeFixture
 	ids?: string[]
 	terminalOperation?: "continue" | "abort"
