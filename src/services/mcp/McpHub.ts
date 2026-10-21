@@ -684,6 +684,19 @@ export class McpHub {
 		return state.mcpEnabled ?? true
 	}
 
+	/**
+	 * Checks if MCP Apps UI support is globally enabled (opt-in feature flag).
+	 * @returns Promise<boolean> indicating if the UI extension capability should be declared
+	 */
+	private async isMcpAppsEnabled(): Promise<boolean> {
+		const provider = this.providerRef.deref()
+		if (!provider) {
+			return false
+		}
+		const state = await provider.getState()
+		return state.mcpAppsEnabled ?? false
+	}
+
 	private async connectToServer(
 		name: string,
 		config: z.infer<typeof ServerConfigSchema>,
@@ -717,13 +730,14 @@ export class McpHub {
 		this.setupFileWatcher(name, config, source)
 
 		try {
+			const mcpAppsEnabled = await this.isMcpAppsEnabled()
 			const client = new Client(
 				{
 					name: "Roo Code",
 					version: this.providerRef.deref()?.context.extension?.packageJSON?.version ?? "1.0.0",
 				},
 				{
-					capabilities: {},
+					capabilities: mcpAppsEnabled ? { extensions: { "io.modelcontextprotocol/ui": {} } } : {},
 				},
 			)
 

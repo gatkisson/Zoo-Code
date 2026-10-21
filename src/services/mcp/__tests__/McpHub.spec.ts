@@ -3208,4 +3208,68 @@ describe("McpHub", () => {
 			await secondFlow
 		})
 	})
+
+	describe("MCP Apps UI capability declaration", () => {
+		// Seed a single stdio server and let the constructor's initializeGlobalMcpServers()
+		// drive connectToServer(), mirroring the "should use MCP_DISABLED reason..." pattern.
+		const connectWithState = async (serverName: string, state: Record<string, unknown>) => {
+			mockProvider.getState = vi.fn().mockResolvedValue(state)
+
+			// Mock Client + StdioClientTransport with working implementations so the
+			// handshake completes (same shape as "should create connected connections").
+			const stdioModule = await import("@modelcontextprotocol/sdk/client/stdio.js")
+			const StdioClientTransport = stdioModule.StdioClientTransport as ReturnType<typeof vi.fn>
+			StdioClientTransport.mockImplementation(function () {
+				return {
+					start: vi.fn().mockResolvedValue(undefined),
+					close: vi.fn().mockResolvedValue(undefined),
+					stderr: { on: vi.fn() },
+					onerror: null,
+					onclose: null,
+				}
+			})
+
+			const clientModule = await import("@modelcontextprotocol/sdk/client/index.js")
+			const Client = clientModule.Client as ReturnType<typeof vi.fn>
+			Client.mockImplementation(function () {
+				return {
+					connect: vi.fn().mockResolvedValue(undefined),
+					close: vi.fn().mockResolvedValue(undefined),
+					getInstructions: vi.fn().mockReturnValue("test instructions"),
+					request: vi.fn().mockResolvedValue({ tools: [], resources: [], resourceTemplates: [] }),
+				}
+			})
+
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({
+					mcpServers: {
+						[serverName]: {
+							command: "node",
+							args: ["test.js"],
+						},
+					},
+				}),
+			)
+
+			const hub = new McpHub(mockProvider as ClineProvider)
+			await hub.waitUntilReady()
+			return Client
+		}
+
+		it("declares the io.modelcontextprotocol/ui extension capability when mcpAppsEnabled is true", async () => {
+			const Client = await connectWithState("ui-cap-server", { mcpEnabled: true, mcpAppsEnabled: true })
+
+			const clientOptions = Client.mock.calls.at(-1)?.[1] as { capabilities: Record<string, unknown> }
+			expect(clientOptions.capabilities.extensions).toEqual({ "io.modelcontextprotocol/ui": {} })
+		})
+
+		it("does not declare UI capability when mcpAppsEnabled is false or unset", async () => {
+			for (const state of [{ mcpEnabled: true, mcpAppsEnabled: false }, { mcpEnabled: true }]) {
+				const Client = await connectWithState("no-ui-cap-server", state)
+
+				const clientOptions = Client.mock.calls.at(-1)?.[1] as { capabilities: Record<string, unknown> }
+				expect(clientOptions.capabilities).toEqual({})
+			}
+		})
+	})
 })
