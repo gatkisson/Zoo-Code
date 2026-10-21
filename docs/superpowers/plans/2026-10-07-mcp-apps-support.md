@@ -1264,7 +1264,7 @@ Expected: PASS (new + existing).
 
 - [ ] **Step 8: Lint + commit**
 
-Run: `pnpm --dir src exec eslint --prune-suppressions --max-warnings=0 services/mcp/mcp-app-bridge.ts services/mcp/McpHub.ts core/webview/webviewMessageHandler.ts` — Expected: exit 0, counts unchanged (new files must contribute zero).
+Run: `pnpm --dir src exec eslint --max-warnings=0 services/mcp/mcp-app-bridge.ts services/mcp/McpHub.ts core/webview/webviewMessageHandler.ts` — Expected: exit 0, counts unchanged (new files must contribute zero). Do NOT pass `--prune-suppressions`: it reformats `src/eslint-suppressions.json` whitespace-only and pollutes the diff.
 
 ```bash
 git add packages/types/src/vscode-extension-host.ts src/services/mcp/mcp-app-bridge.ts src/services/mcp/__tests__/mcp-app-bridge.spec.ts src/services/mcp/McpHub.ts src/services/mcp/__tests__/McpHub.spec.ts src/core/webview/webviewMessageHandler.ts src/core/webview/__tests__/webviewMessageHandler.spec.ts
