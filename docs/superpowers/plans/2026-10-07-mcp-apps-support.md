@@ -753,7 +753,7 @@ In `webview-ui/src/i18n/locales/en/mcp.json`, inside the top-level object:
 
 ```json
 	"serverRow": {
-		"disableUi": "Disable interactive UIs for this server"
+		"disableUi": "Enable interactive UIs for this server"
 	},
 ```
 
