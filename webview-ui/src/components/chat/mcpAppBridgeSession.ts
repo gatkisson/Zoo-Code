@@ -2,7 +2,13 @@ import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/
 
 import { requestMcpApp, type McpAppMethod } from "@src/services/mcp-app/useMcpAppBridge"
 
-export type McpAppBridgeSession = { start: (iframeWindow: Window) => void; dispose: () => void }
+export type McpAppBridgeSession = {
+	start: (iframeWindow: Window) => void
+	dispose: () => void
+	// Exposes the AppBridge so tests can drive the registered handlers directly
+	// (Task 9 review T9-I2, deviation D13); production code uses start/dispose only.
+	bridge: AppBridge
+}
 
 // Handler result types are derived from the installed AppBridge setter signatures
 // (@modelcontextprotocol/ext-apps 1.7.5) instead of importing SDK types directly,
@@ -63,5 +69,6 @@ export function createMcpAppBridgeSession(opts: {
 		dispose: () => {
 			bridge.close()
 		},
+		bridge,
 	}
 }

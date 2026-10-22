@@ -1,5 +1,5 @@
 import { type Mock } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 
 import McpAppFrame from "../McpAppFrame"
 import { requestMcpApp } from "@src/services/mcp-app/useMcpAppBridge"
@@ -100,5 +100,57 @@ describe("McpAppFrame", () => {
 
 		await waitFor(() => expect(screen.getByText(/mcp app ui unavailable/i)).toBeInTheDocument())
 		expect(screen.getByText(/server offline/)).toBeInTheDocument()
+	})
+
+	it("resizes when the size report comes from this frame's own contentWindow", async () => {
+		const { container } = render(<McpAppFrame {...baseProps} />)
+		await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull())
+		const frame = container.querySelector("iframe") as HTMLIFrameElement
+		expect(frame.style.height).toBe("240px")
+
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: { type: "ui/notifications/size-changed", height: 500 },
+					source: frame.contentWindow,
+				}),
+			)
+		})
+
+		expect(frame.style.height).toBe("500px")
+	})
+
+	it("ignores size reports whose source is not this frame's contentWindow", async () => {
+		const { container } = render(<McpAppFrame {...baseProps} />)
+		await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull())
+		const frame = container.querySelector("iframe") as HTMLIFrameElement
+
+		// A sibling frame stands in for a hostile grandchild posting straight to
+		// the webview top (or another McpAppFrame instance's relay): it must not
+		// resize this frame.
+		const hostile = document.createElement("iframe")
+		document.body.appendChild(hostile)
+		act(() => {
+			window.dispatchEvent(
+				new MessageEvent("message", {
+					data: { type: "ui/notifications/size-changed", height: 999 },
+					source: hostile.contentWindow,
+				}),
+			)
+		})
+
+		expect(frame.style.height).toBe("240px")
+		hostile.remove()
+	})
+
+	it("renders nothing when the sandbox proxy URI is unset", async () => {
+		;(window as unknown as { MCP_APP_SANDBOX_PROXY_URI?: string }).MCP_APP_SANDBOX_PROXY_URI = ""
+		const { container } = render(<McpAppFrame {...baseProps} />)
+
+		await waitFor(() => expect(requestMcpApp).toHaveBeenCalledTimes(1))
+		// A buggy build mounts <iframe src=""> once the resource resolves, which
+		// self-nests the webview; the fixed build renders nothing at all.
+		await waitFor(() => expect(container.innerHTML).toBe(""))
+		expect(container.querySelector("iframe")).toBeNull()
 	})
 })

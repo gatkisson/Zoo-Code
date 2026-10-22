@@ -39,6 +39,9 @@ export const McpAppFrame = ({ serverName, source, toolName, toolMeta, resultMeta
 	// Result-level _meta override first (architecture risk item), then the tool declaration.
 	const uiUri = getMcpToolUiResourceUri(resultMeta) ?? getMcpToolUiResourceUri(toolMeta)
 	const enabled = mcpAppsEnabled && !!uiUri && !isMcpServerUiDisabled(server ?? { config: undefined })
+	// An unset injected proxy URI must disable the frame entirely: <iframe src="">
+	// resolves to the webview document itself and would self-nest it (Task 9 M1).
+	const proxyUri = getSandboxProxyUri()
 
 	useEffect(() => {
 		if (!enabled || !uiUri) {
@@ -99,6 +102,9 @@ export const McpAppFrame = ({ serverName, source, toolName, toolMeta, resultMeta
 
 	useEffect(() => {
 		const onMessage = (event: MessageEvent) => {
+			if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) {
+				return // only size reports relayed by THIS frame's proxy document
+			}
 			// Apps report size via the JSON-RPC notification `method` field relayed
 			// verbatim by the sandbox proxy; `type` is accepted for tolerance.
 			const data = event.data as
@@ -121,7 +127,7 @@ export const McpAppFrame = ({ serverName, source, toolName, toolMeta, resultMeta
 		return () => window.removeEventListener("message", onMessage)
 	}, [])
 
-	if (!enabled) {
+	if (!enabled || !proxyUri) {
 		return null
 	}
 
@@ -143,9 +149,10 @@ export const McpAppFrame = ({ serverName, source, toolName, toolMeta, resultMeta
 
 	return (
 		<iframe
+			key={uiUri} // remount (and refire onLoad) when the UI resource changes (Task 9 M2)
 			ref={iframeRef}
 			title={`MCP App: ${serverName}/${toolName}`}
-			src={getSandboxProxyUri()}
+			src={proxyUri}
 			sandbox="allow-scripts allow-forms allow-popups"
 			style={{ height }} // dynamic px value; not expressible as a Tailwind class
 			className="w-full border border-vscode-border rounded-xs mt-2 bg-vscode-editor-background"
