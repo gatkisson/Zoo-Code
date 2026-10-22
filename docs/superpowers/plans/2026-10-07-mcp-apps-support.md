@@ -1524,26 +1524,25 @@ Create `src/assets/mcp-app-sandbox-proxy.html`:
 				document.body.appendChild(inner)
 			}
 
+			// Webview -> proxy: control messages mount the app; everything else forwards into the app frame.
 			window.addEventListener("message", (event) => {
+				if (event.source !== window.parent) return // ignore inner-frame and any other sources here
 				const data = event.data
 				if (data && data.type === "mcp-app-set-html" && typeof data.html === "string") {
 					mountApp(data.html)
 					return
 				}
-				// JSON-RPC from the webview bridge -> forward into the app frame.
 				if (inner && inner.contentWindow) {
 					inner.contentWindow.postMessage(data, "*")
 				}
 			})
 
-			// Anything from the app frame -> relay verbatim to the embedding webview.
+			// App frame -> webview: relay verbatim (source is the inner frame, never window.parent).
 			window.addEventListener("message", (event) => {
-				if (event.source === window.parent) {
-					const data = event.data
-					if (data && data.type !== "mcp-app-set-html") {
-						window.parent.postMessage(data, "*")
-					}
-				}
+				if (!inner || event.source !== inner.contentWindow) return
+				const data = event.data
+				if (data && data.type === "mcp-app-set-html") return // control is proxy-only; defensive drop
+				window.parent.postMessage(data, "*")
 			})
 
 			window.parent.postMessage({ type: "mcp-app-sandbox-proxy-ready" }, "*")
@@ -1553,6 +1552,8 @@ Create `src/assets/mcp-app-sandbox-proxy.html`:
 ```
 
 (If Task 1's spike recorded the MessageChannel fallback, adapt the two relay listeners accordingly — that note is in `docs/superpowers/plans/spike-results-mcp-apps.md`.)
+
+> **Amendment (2026-10-22, Task 8 review I1):** The original snippet's second listener gated on `event.source === window.parent`, which matches WEBVIEW-origin messages — it echoed host messages back to the webview and never relayed inner-app-frame traffic to the host, contradicting this task's own Interfaces contract ("proxy→webview any message received from the inner frame, verbatim"). Corrected per the Task 8 review: Listener A now gates on parent-source before forwarding into the app frame; Listener B relays only `inner.contentWindow`-source messages and drops control types. The shipped `src/assets/mcp-app-sandbox-proxy.html` (commit de17b6768) still contains the defective listeners; the fix ships in Task 9 Step 0 with relay-direction test coverage.
 
 - [ ] **Step 3: Bundle + package the asset**
 
