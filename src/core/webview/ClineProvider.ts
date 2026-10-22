@@ -1577,6 +1577,10 @@ export class ClineProvider
 		])
 		const imagesUri = getUri(webview, this.contextProxy.extensionUri, ["assets", "images"])
 		const audioUri = getUri(webview, this.contextProxy.extensionUri, ["webview-ui", "audio"])
+		const mcpAppSandboxProxyUri = getUri(webview, this.contextProxy.extensionUri, [
+			"assets",
+			"mcp-app-sandbox-proxy.html",
+		])
 
 		const file = "src/index.tsx"
 		const scriptUri = `http://${localServerUrl}/${file}`
@@ -1615,6 +1619,7 @@ export class ClineProvider
 						window.IMAGES_BASE_URI = "${imagesUri}"
 						window.AUDIO_BASE_URI = "${audioUri}"
 						window.MATERIAL_ICONS_BASE_URI = "${materialIconsUri}"
+						window.MCP_APP_SANDBOX_PROXY_URI = "${mcpAppSandboxProxyUri}"
 					</script>
 					<title>Zoo Code</title>
 				</head>
@@ -1659,6 +1664,10 @@ export class ClineProvider
 		])
 		const imagesUri = getUri(webview, this.contextProxy.extensionUri, ["assets", "images"])
 		const audioUri = getUri(webview, this.contextProxy.extensionUri, ["webview-ui", "audio"])
+		const mcpAppSandboxProxyUri = getUri(webview, this.contextProxy.extensionUri, [
+			"assets",
+			"mcp-app-sandbox-proxy.html",
+		])
 
 		// Use a nonce to only allow a specific script to be run.
 		/*
@@ -1694,6 +1703,7 @@ export class ClineProvider
 				window.IMAGES_BASE_URI = "${imagesUri}"
 				window.AUDIO_BASE_URI = "${audioUri}"
 				window.MATERIAL_ICONS_BASE_URI = "${materialIconsUri}"
+				window.MCP_APP_SANDBOX_PROXY_URI = "${mcpAppSandboxProxyUri}"
 			</script>
             <title>Zoo Code</title>
           </head>

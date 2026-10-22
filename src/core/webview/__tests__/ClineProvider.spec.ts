@@ -4,6 +4,7 @@ import * as path from "path"
 import { TaskRegistry } from "../../task/TaskRegistry"
 
 import Anthropic from "@anthropic-ai/sdk"
+import type { Mock } from "vitest"
 import * as vscode from "vscode"
 import axios from "axios"
 
@@ -2966,6 +2967,28 @@ describe("ClineProvider", () => {
 		// Must not weaken script-src: production keeps nonce + strict-dynamic, no unsafe-inline.
 		expect(html).toContain("'strict-dynamic'")
 		expect(html).not.toContain("script-src 'unsafe-inline'")
+	})
+
+	test("injects the sandbox proxy URI into the production webview HTML", async () => {
+		// Resolve URIs from the path segments ClineProvider passes so the injected
+		// global provably points at the bundled proxy asset. mockWebviewView is
+		// rebuilt per test; Uri.joinPath is a module-level mock, so restore it after.
+		const joinPathMock = vscode.Uri.joinPath as Mock
+		joinPathMock.mockImplementation((...segments: unknown[]) =>
+			segments.filter((segment) => typeof segment === "string").join("/"),
+		)
+		mockWebviewView.webview.asWebviewUri = vi.fn((uri: unknown) => String(uri))
+
+		try {
+			await provider.resolveWebviewView(mockWebviewView)
+
+			const html = String(mockWebviewView.webview.html)
+
+			expect(html).toContain("window.MCP_APP_SANDBOX_PROXY_URI =")
+			expect(html).toContain("mcp-app-sandbox-proxy.html")
+		} finally {
+			joinPathMock.mockReset()
+		}
 	})
 })
 

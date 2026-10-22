@@ -28,6 +28,7 @@
 
 # Include icons and images
 !assets/codicons/**
+!assets/mcp-app-sandbox-proxy.html
 !assets/vscode-material-icons/**
 !assets/icons/**
 !assets/images/**
