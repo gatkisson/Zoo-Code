@@ -33,26 +33,25 @@
 				document.body.appendChild(inner)
 			}
 
+			// Webview -> proxy: control messages mount the app; everything else forwards into the app frame.
 			window.addEventListener("message", (event) => {
+				if (event.source !== window.parent) return // ignore inner-frame and any other sources here
 				const data = event.data
 				if (data && data.type === "mcp-app-set-html" && typeof data.html === "string") {
 					mountApp(data.html)
 					return
 				}
-				// JSON-RPC from the webview bridge -> forward into the app frame.
 				if (inner && inner.contentWindow) {
 					inner.contentWindow.postMessage(data, "*")
 				}
 			})
-
-			// Anything from the app frame -> relay verbatim to the embedding webview.
+	
+			// App frame -> webview: relay verbatim.
 			window.addEventListener("message", (event) => {
-				if (event.source === window.parent) {
-					const data = event.data
-					if (data && data.type !== "mcp-app-set-html") {
-						window.parent.postMessage(data, "*")
-					}
-				}
+				if (!inner || event.source !== inner.contentWindow) return
+				const data = event.data
+				if (data && data.type === "mcp-app-set-html") return // control is proxy-only; defensive drop
+				window.parent.postMessage(data, "*")
 			})
 
 			window.parent.postMessage({ type: "mcp-app-sandbox-proxy-ready" }, "*")
