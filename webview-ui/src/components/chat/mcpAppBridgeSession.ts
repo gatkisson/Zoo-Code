@@ -1,6 +1,17 @@
 import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge"
 
 import { requestMcpApp, type McpAppMethod } from "@src/services/mcp-app/useMcpAppBridge"
+import { vscode } from "@src/utils/vscode"
+
+const SAFE_APP_URL_SCHEMES = new Set(["https:", "http:", "mailto:"])
+
+export function isSafeAppUrl(raw: string): boolean {
+	try {
+		return SAFE_APP_URL_SCHEMES.has(new URL(raw).protocol)
+	} catch {
+		return false
+	}
+}
 
 export type McpAppBridgeSession = {
 	start: (iframeWindow: Window) => void
@@ -38,8 +49,7 @@ export function createMcpAppBridgeSession(opts: {
 	const proxy = async (method: McpAppMethod, params: Record<string, unknown>) =>
 		requestMcpApp({ serverName: opts.serverName, source: opts.source, method, params })
 
-	// serverTools/serverResources advertise the two proxied methods; openLinks is
-	// advertised now and wired to a handler in Task 10 (plan Step 4 of that task).
+	// All three advertised capabilities now have handlers (openLinks wired in Task 10).
 	const bridge = new AppBridge(
 		null,
 		{ name: "Zoo Code", version: "1.0.0" },
@@ -57,6 +67,27 @@ export function createMcpAppBridgeSession(opts: {
 			name: params.name,
 			arguments: params.arguments ?? {},
 		})) as Awaited<ReturnType<CallToolHandler>>
+	}
+
+	// ui/open-link: scheme-allowlisted external links only; unsafe URLs are dropped
+	// silently (isError tells the app the host refused, per McpUiOpenLinkResult).
+	bridge.onopenlink = async ({ url }) => {
+		if (!isSafeAppUrl(url)) {
+			console.log("[mcp-apps] Blocked open-link request for unsafe URL:", url)
+			return { isError: true }
+		}
+		vscode.postMessage({ type: "openExternal", url })
+		return {}
+	}
+
+	// ui/message: user-visible draft into the chat textarea; the user presses send
+	// (architecture decision: no silent injection). Non-text blocks are dropped.
+	bridge.onmessage = async ({ content }) => {
+		const text = content.flatMap((block) => (block.type === "text" ? [block.text] : []))
+		if (text.length > 0) {
+			vscode.postMessage({ type: "insertTextIntoTextarea", text: text.join("\n") })
+		}
+		return {}
 	}
 
 	return {

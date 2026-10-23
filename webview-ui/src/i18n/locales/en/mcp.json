@@ -15,6 +15,15 @@
 	"serverRow": {
 		"disableUi": "Enable interactive UIs for this server"
 	},
+	"appFrame": {
+		"loading": "Loading UI…",
+		"error": "MCP App UI unavailable"
+	},
+	"approval": {
+		"runTool": "Run {{server}}/{{tool}}?",
+		"allow": "Allow",
+		"deny": "Deny"
+	},
 	"editGlobalMCP": "Edit Global MCP",
 	"editProjectMCP": "Edit Project MCP",
 	"refreshMCP": "Refresh MCP Servers",

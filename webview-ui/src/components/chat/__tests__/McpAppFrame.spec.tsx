@@ -1,5 +1,6 @@
 import { type Mock } from "vitest"
-import { act, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 
 import McpAppFrame from "../McpAppFrame"
 import { requestMcpApp } from "@src/services/mcp-app/useMcpAppBridge"
@@ -11,7 +12,10 @@ vi.mock("@src/context/ExtensionStateContext", () => ({
 	useExtensionState: () => state,
 }))
 
-vi.mock("../mcpAppBridgeSession", () => ({
+// importActual keeps isSafeAppUrl real (the scheme-allowlist tests exercise the
+// real module); only the session factory stays mocked.
+vi.mock("../mcpAppBridgeSession", async () => ({
+	...(await vi.importActual("../mcpAppBridgeSession")),
 	createMcpAppBridgeSession: vi.fn(() => ({ start: vi.fn(), dispose: vi.fn() })),
 }))
 
@@ -152,5 +156,72 @@ describe("McpAppFrame", () => {
 		// self-nests the webview; the fixed build renders nothing at all.
 		await waitFor(() => expect(container.innerHTML).toBe(""))
 		expect(container.querySelector("iframe")).toBeNull()
+	})
+})
+
+describe("McpAppFrame approval gate", () => {
+	// Top-level describes do not inherit the outer beforeEach, so mirror its
+	// setup here (plan ruling: verbatim test bodies need the mocks primed).
+	beforeEach(() => {
+		vi.clearAllMocks()
+		state.mcpAppsEnabled = true
+		;(window as unknown as { MCP_APP_SANDBOX_PROXY_URI?: string }).MCP_APP_SANDBOX_PROXY_URI =
+			"vscode-webview://test-csp/assets/mcp-app-sandbox-proxy.html"
+		;(requestMcpApp as Mock).mockResolvedValue({
+			contents: [
+				{ uri: "ui://demo/card", mimeType: "text/html;profile=mcp-app", text: "<html><body>ok</body></html>" },
+			],
+		})
+	})
+
+	it("asks for confirmation when the tool is not always-allowed and resolves on Allow", async () => {
+		const { createMcpAppBridgeSession } = await import("../mcpAppBridgeSession")
+		let capturedOnToolCall: ((name: string, args: Record<string, unknown>) => Promise<boolean>) | undefined
+		;(createMcpAppBridgeSession as Mock).mockImplementation((opts) => {
+			capturedOnToolCall = opts.onToolCall
+			return { start: vi.fn(), dispose: vi.fn() }
+		})
+
+		const { getByRole, findByText, container } = render(<McpAppFrame {...baseProps} alwaysAllow={false} />)
+		// jsdom never loads the iframe's src, so fire load() manually once the HTML has
+		// been fetched and the iframe is mounted (onIframeLoad then creates the session).
+		await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull())
+		fireEvent.load(container.querySelector("iframe")!)
+		await waitFor(() => expect(createMcpAppBridgeSession).toHaveBeenCalled())
+
+		const denyPromise = capturedOnToolCall!("dangerous", {})
+		const prompt = await findByText(/run demo\/dangerous/i)
+		expect(prompt).toBeInTheDocument()
+
+		await userEvent.click(getByRole("button", { name: /deny/i }))
+		await expect(denyPromise).resolves.toBe(false)
+	})
+
+	it("auto-approves when alwaysAllow is set on the tool", async () => {
+		const { createMcpAppBridgeSession } = await import("../mcpAppBridgeSession")
+		let capturedOnToolCall: ((name: string, args: Record<string, unknown>) => Promise<boolean>) | undefined
+		;(createMcpAppBridgeSession as Mock).mockImplementation((opts) => {
+			capturedOnToolCall = opts.onToolCall
+			return { start: vi.fn(), dispose: vi.fn() }
+		})
+
+		const { container } = render(<McpAppFrame {...baseProps} alwaysAllow />)
+		await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull())
+		fireEvent.load(container.querySelector("iframe")!)
+		await waitFor(() => expect(createMcpAppBridgeSession).toHaveBeenCalled())
+
+		await expect(capturedOnToolCall!("safe", {})).resolves.toBe(true)
+	})
+})
+
+describe("isSafeAppUrl", () => {
+	it("allows only https, http and mailto schemes", async () => {
+		const { isSafeAppUrl } = await import("../mcpAppBridgeSession")
+		expect(isSafeAppUrl("https://example.com")).toBe(true)
+		expect(isSafeAppUrl("http://localhost:3000/x")).toBe(true)
+		expect(isSafeAppUrl("mailto:someone@example.com")).toBe(true)
+		expect(isSafeAppUrl("vscode://extension/command")).toBe(false)
+		expect(isSafeAppUrl("javascript:alert(1)")).toBe(false)
+		expect(isSafeAppUrl("not a url")).toBe(false)
 	})
 })
