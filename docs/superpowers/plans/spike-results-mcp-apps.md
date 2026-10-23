@@ -19,7 +19,7 @@ nested-frame model is confirmed and `mcpAppsEnabled` is enabled in production.
 
 1. Press F5 in this repo to launch the Extension Development Host (dev CSP variant is used automatically).
 2. Temporarily paste the proxy fixture body (see "Proxy fixture" below) into the dev webview HTML (`getDevHtmlContent` in `src/core/webview/ClineProvider.ts`) as throwaway markup, or serve `proxy.html` from a local file and load it inside a test webview panel. This edit is throwaway — revert it after the check; do not commit.
-3. Observe the three criteria in the table below and record PASS/FAIL plus notes.
+3. Observe the four criteria in the table below and record PASS/FAIL plus notes.
 4. Fill in the VS Code version (Help > About), set `Status:` to VERIFIED, and replace `Decision: PENDING` with either `PRIMARY` (nested-frame model CONFIRMED) or `FALLBACK` (render-into-proxy; requires architecture re-review before Task 9).
 
 ## PASS criteria (all must hold)
@@ -27,8 +27,9 @@ nested-frame model is confirmed and `mcpAppsEnabled` is enabled in production.
 1. The inner frame shows `ran` (inline script executed despite the TOP-LEVEL webview CSP being nonce+strict-dynamic).
 2. DevTools console of the outer frame logs `[proxy] relay:` for a message posted from the inner frame (add `parent.postMessage("ping","*")` to the srcdoc to test).
 3. The webview itself still loads normally (no CSP violations for the React app).
+4. Host-window transport seam: the webview window receives the relayed message with `event.source === proxyFrame.contentWindow` (register a `window.addEventListener("message", …)` probe in the webview console and inspect `event.source`). With the SHIPPED proxy (`src/assets/mcp-app-sandbox-proxy.html`) instead of the fixture, also confirm the AppBridge handshake completes by observing the parse-time `{ type: "mcp-app-sandbox-proxy-ready" }` ping in the webview DevTools console — this is the message `McpAppFrame` uses to gate `bridge.connect()`.
 
-**FAIL handling:** if criterion 1 fails, record it and adopt the documented fallback: render app HTML directly into the proxy document (no inner frame) — flag in the decision doc that isolation is weaker and requires architecture re-review before Task 9. If criterion 2 fails, the relay must use `MessageChannel` ports instead of direct `postMessage`; note the required change for Task 8.
+**FAIL handling:** if criterion 1 fails, record it and adopt the documented fallback: render app HTML directly into the proxy document (no inner frame) — flag in the decision doc that isolation is weaker and requires architecture re-review before Task 9. If criterion 2 fails, the relay must use `MessageChannel` ports instead of direct `postMessage`; note the required change for Task 8. If criterion 4 fails (relayed message never reaches the webview window, arrives with a mismatched `event.source`, or the ready ping never fires), the source-gated listeners in `McpAppFrame.tsx` / the shipped proxy cannot complete the AppBridge handshake — fix the relay chain before enabling `mcpAppsEnabled`.
 
 ## Results
 
@@ -37,6 +38,7 @@ nested-frame model is confirmed and `mcpAppsEnabled` is enabled in production.
 | Inner srcdoc inline script executes | PENDING | |
 | proxy↔inner postMessage relay works | PENDING | |
 | Webview app unaffected by frame-src | PENDING | |
+| Host-window transport seam (source-gated relay + ready ping) | PENDING | |
 
 Decision: PENDING
 
