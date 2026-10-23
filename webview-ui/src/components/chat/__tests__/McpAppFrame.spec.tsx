@@ -212,6 +212,54 @@ describe("McpAppFrame approval gate", () => {
 
 		await expect(capturedOnToolCall!("safe", {})).resolves.toBe(true)
 	})
+
+	it("settles a pending approval as denied when the frame unmounts", async () => {
+		const { createMcpAppBridgeSession } = await import("../mcpAppBridgeSession")
+		let capturedOnToolCall: ((name: string, args: Record<string, unknown>) => Promise<boolean>) | undefined
+		;(createMcpAppBridgeSession as Mock).mockImplementation((opts) => {
+			capturedOnToolCall = opts.onToolCall
+			return { start: vi.fn(), dispose: vi.fn() }
+		})
+
+		const { container, unmount, findByText } = render(<McpAppFrame {...baseProps} alwaysAllow={false} />)
+		await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull())
+		fireEvent.load(container.querySelector("iframe")!)
+		await waitFor(() => expect(createMcpAppBridgeSession).toHaveBeenCalled())
+
+		const pending = capturedOnToolCall!("dangerous", {})
+		await findByText(/run demo\/dangerous/i)
+
+		// T10-M1: teardown must settle the open prompt (deny-on-teardown) rather
+		// than leaving the app-side callTool hanging.
+		unmount()
+		await expect(pending).resolves.toBe(false)
+	})
+
+	it("reads the approval flags at call time, not iframe-load time", async () => {
+		const { createMcpAppBridgeSession } = await import("../mcpAppBridgeSession")
+		let capturedOnToolCall: ((name: string, args: Record<string, unknown>) => Promise<boolean>) | undefined
+		;(createMcpAppBridgeSession as Mock).mockImplementation((opts) => {
+			capturedOnToolCall = opts.onToolCall
+			return { start: vi.fn(), dispose: vi.fn() }
+		})
+
+		const { container, findByText, getByRole, rerender } = render(
+			<McpAppFrame {...baseProps} alwaysAllow={false} />,
+		)
+		await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull())
+		fireEvent.load(container.querySelector("iframe")!)
+		await waitFor(() => expect(createMcpAppBridgeSession).toHaveBeenCalled())
+
+		// Gate created while alwaysAllow was false; settle the first prompt.
+		const gated = capturedOnToolCall!("late", {})
+		await findByText(/run demo\/late/i)
+		fireEvent.click(getByRole("button", { name: /deny/i }))
+		await expect(gated).resolves.toBe(false)
+
+		// T10-M2: the flag flips AFTER session creation; the next call must see it.
+		rerender(<McpAppFrame {...baseProps} alwaysAllow />)
+		await expect(capturedOnToolCall!("late", {})).resolves.toBe(true)
+	})
 })
 
 describe("isSafeAppUrl", () => {

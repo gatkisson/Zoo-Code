@@ -3,8 +3,10 @@ import { type AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge"
 
 import { createMcpAppBridgeSession, type McpAppBridgeSession } from "../mcpAppBridgeSession"
 import { requestMcpApp } from "@src/services/mcp-app/useMcpAppBridge"
+import { vscode } from "@src/utils/vscode"
 
 vi.mock("@src/services/mcp-app/useMcpAppBridge", () => ({ requestMcpApp: vi.fn() }))
+vi.mock("@src/utils/vscode", () => ({ vscode: { postMessage: vi.fn() } }))
 
 // The AppBridge handler signatures require a RequestHandlerExtra even though our
 // handlers ignore it; this typed double also proves sendRequest is never touched.
@@ -82,5 +84,68 @@ describe("createMcpAppBridgeSession", () => {
 			params: { uri: "ui://demo/card" },
 		})
 		expect(result).toBe(proxiedResult)
+	})
+})
+
+// Task 10 review T10-I1: the open-link/message handlers are security glue around
+// isSafeAppUrl and must be pinned through the D13 bridge seam. Top-level describes
+// do not inherit the outer beforeEach (D-10a lesson), so each mirrors its clearing.
+describe("open-link handler", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	it("posts openExternal for a safe URL and returns an empty result", async () => {
+		const session = createMcpAppBridgeSession({ serverName: "demo", source: "global" })
+		const onopenlink = bridgeOf(session).onopenlink
+		expect(onopenlink).toBeDefined()
+
+		await expect(onopenlink!({ url: "https://example.com/x" }, makeExtra())).resolves.toEqual({})
+		expect(vscode.postMessage).toHaveBeenCalledWith({ type: "openExternal", url: "https://example.com/x" })
+	})
+
+	it("drops an unsafe URL without posting and reports isError", async () => {
+		const session = createMcpAppBridgeSession({ serverName: "demo", source: "global" })
+		const onopenlink = bridgeOf(session).onopenlink
+		expect(onopenlink).toBeDefined()
+
+		await expect(onopenlink!({ url: "vscode://extension/command" }, makeExtra())).resolves.toEqual({
+			isError: true,
+		})
+		expect(vscode.postMessage).not.toHaveBeenCalled()
+	})
+})
+
+describe("message handler", () => {
+	beforeEach(() => {
+		vi.clearAllMocks()
+	})
+
+	it("joins text blocks with newlines and posts insertTextIntoTextarea; non-text blocks are dropped", async () => {
+		const session = createMcpAppBridgeSession({ serverName: "demo", source: "global" })
+		const onmessage = bridgeOf(session).onmessage
+		expect(onmessage).toBeDefined()
+
+		await onmessage!(
+			{
+				role: "user",
+				content: [
+					{ type: "text", text: "line one" },
+					{ type: "image", data: "Zm9v", mimeType: "image/png" },
+					{ type: "text", text: "line two" },
+				],
+			},
+			makeExtra(),
+		)
+		expect(vscode.postMessage).toHaveBeenCalledWith({
+			type: "insertTextIntoTextarea",
+			text: "line one\nline two",
+		})
+	})
+
+	it("posts nothing when no text blocks are present", async () => {
+		const session = createMcpAppBridgeSession({ serverName: "demo", source: "global" })
+		await bridgeOf(session).onmessage!({ role: "user", content: [] }, makeExtra())
+		expect(vscode.postMessage).not.toHaveBeenCalled()
 	})
 })

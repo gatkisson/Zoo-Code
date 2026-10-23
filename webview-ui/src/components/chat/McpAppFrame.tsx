@@ -93,22 +93,48 @@ export const McpAppFrame = ({
 
 	const disposeRef = useRef<{ dispose: () => void } | null>(null)
 
+	// Mirror of the pending approval resolver in a ref so teardown paths can settle
+	// it without reading state (Task 10 review T10-M1: an unsettled promise hangs
+	// the app-side callTool until the bridge times out; deny-on-teardown is the
+	// fail-safe direction).
+	const pendingApprovalRef = useRef<{ toolName: string; resolve: (approved: boolean) => void } | null>(null)
+
+	const settlePendingApproval = useCallback((approved: boolean) => {
+		pendingApprovalRef.current?.resolve(approved)
+		pendingApprovalRef.current = null
+		setPendingApproval(null)
+	}, [])
+
 	useEffect(() => {
 		return () => {
+			// Unmount with a prompt still open: deny it (T10-M1).
+			settlePendingApproval(false)
 			disposeRef.current?.dispose()
 			disposeRef.current = null
 		}
-	}, [])
+	}, [settlePendingApproval])
 
 	const requestApproval = useCallback(
 		(toolName: string): Promise<boolean> => {
 			if (alwaysAllow || alwaysAllowMcp) {
 				return Promise.resolve(true)
 			}
-			return new Promise((resolve) => setPendingApproval({ toolName, resolve }))
+			return new Promise((resolve) => {
+				const approval = { toolName, resolve }
+				pendingApprovalRef.current = approval
+				setPendingApproval(approval)
+			})
 		},
 		[alwaysAllow, alwaysAllowMcp],
 	)
+
+	// Ref indirection so the session's gate reads the CURRENT flags at call time
+	// instead of the iframe-load-time closure (Task 10 review T10-M2: revoking
+	// always-allow mid-session must take effect without a remount).
+	const requestApprovalRef = useRef(requestApproval)
+	useEffect(() => {
+		requestApprovalRef.current = requestApproval
+	}, [requestApproval])
 
 	const onIframeLoad = useCallback(() => {
 		const frameWindow = iframeRef.current?.contentWindow
@@ -118,15 +144,17 @@ export const McpAppFrame = ({
 
 		frameWindow.postMessage({ type: "mcp-app-set-html", html }, "*")
 
+		// Replacing the session: settle any approval pending on the old one (T10-M1).
+		settlePendingApproval(false)
 		disposeRef.current?.dispose()
 		const session = createMcpAppBridgeSession({
 			serverName,
 			source,
-			onToolCall: async (name) => requestApproval(name),
+			onToolCall: async (name) => requestApprovalRef.current(name),
 		})
 		disposeRef.current = session
 		session.start(frameWindow)
-	}, [html, serverName, source, requestApproval])
+	}, [html, serverName, source, settlePendingApproval])
 
 	useEffect(() => {
 		const onMessage = (event: MessageEvent) => {
@@ -189,18 +217,12 @@ export const McpAppFrame = ({
 					<div className="flex gap-2">
 						<button
 							className="text-xs px-2 py-1 rounded-xs bg-vscode-button-background text-vscode-button-foreground"
-							onClick={() => {
-								pendingApproval.resolve(true)
-								setPendingApproval(null)
-							}}>
+							onClick={() => settlePendingApproval(true)}>
 							{t("mcp:approval.allow", "Allow")}
 						</button>
 						<button
 							className="text-xs px-2 py-1 rounded-xs border border-vscode-button-border"
-							onClick={() => {
-								pendingApproval.resolve(false)
-								setPendingApproval(null)
-							}}>
+							onClick={() => settlePendingApproval(false)}>
 							{t("mcp:approval.deny", "Deny")}
 						</button>
 					</div>
