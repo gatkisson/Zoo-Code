@@ -1,10 +1,10 @@
 # MCP Apps spike results (Task 1)
 
-Date: 2026-10-11  VS Code version: <fill in from Help > About when running the manual check>
+Date: 2026-10-11 (authored) · machine-verified 2026-10-24 · VS Code version: 1.100.0 (automated dev-host spike, `apps/vscode-e2e/src/spike/mcp-apps.spike.ts`)
 
-Status: AWAITING MANUAL VERIFICATION — run F5 dev-host check per this document before enabling mcpAppsEnabled in production
+Status: MACHINE-VERIFIED — automated dev-host spike drove a real VS Code 1.100.0 Extension Development Host (Playwright `_electron`, `extensionDevelopmentPath=src`). Evidence: `apps/vscode-e2e/out/spike-evidence/spike-evidence.json` + `spike-diagnostics-post-probe.json` (run of 2026-10-24T10:51Z).
 
-Decision: PENDING
+Decision: FALLBACK — criterion 1 FAILED; per the FAIL handling below, adopt render-into-proxy (app HTML rendered directly into the proxy document, no inner srcdoc frame). Isolation is weaker than the nested-frame model and **requires architecture re-review before Task 9**. `mcpAppsEnabled` stays default-off (enablement gate closed) until the fallback lands.
 
 ## Scope note (2026-10-10 amendment)
 
@@ -33,14 +33,18 @@ nested-frame model is confirmed and `mcpAppsEnabled` is enabled in production.
 
 ## Results
 
+Machine-verified 2026-10-24 via the automated dev-host spike (`pnpm --dir apps/vscode-e2e test:spike:mcp-apps`; VS Code 1.100.0, Electron/Chromium bundled with that build). Raw evidence: `apps/vscode-e2e/out/spike-evidence/spike-evidence.json`.
+
 | Criterion | Result | Notes |
 |---|---|---|
-| Inner srcdoc inline script executes | PENDING | |
-| proxy↔inner postMessage relay works | PENDING | |
-| Webview app unaffected by frame-src | PENDING | |
-| Host-window transport seam (source-gated relay + ready ping) | PENDING | |
+| Inner srcdoc inline script executes | **FAIL** | Chromium CSP inheritance: the sandboxed srcdoc frame inherits the parent webview's delivered policy, so the app's inline `<script>` is blocked despite the proxy document's own meta CSP (`'unsafe-inline'`). Policies intersect; the inherited nonce+strict-dynamic `script-src` wins. Witness from the run: `[about:srcdoc] Refused to execute inline script because it violates the following Content Security Policy directive: "script-src 'self' https://*.vscode-cdn.net 'sha256-…' 'wasm-unsafe-eval' 'nonce-…' 'strict-dynamic'"`. |
+| proxy↔inner postMessage relay works | **PARTIAL** | Host→proxy→srcdoc leg PROVEN: the proxy received `mcp-app-set-html`, mounted the sandboxed srcdoc iframe, and the card text `hello-mcp-app` rendered (`srcdocCardText`). Inner→proxy leg UNPROVEN — the inner relay probe script never executes (blocked by the criterion-1 CSP inheritance above), so nothing reaches the relay. |
+| Webview app unaffected by frame-src | **PASS** | React app healthy end to end: task ran to completion, "Card rendered." landmark visible in chat (`completionLandmarkVisible: true`); no CSP violations attributable to the webview app itself. |
+| Host-window transport seam (source-gated relay + ready ping) | **PARTIAL** | The shipped proxy's parse-time `{ type: "mcp-app-sandbox-proxy-ready" }` ping was captured by the host-window probe with `sourceIsProxyFrame: true` — the proxy→host relay path that carries AppBridge traffic works and source gating matches. The inner-origin leg of the seam is unproven downstream of criterion 1 (no relayed inner message to observe). |
 
-Decision: PENDING
+Decision: **FALLBACK** — per the FAIL handling above, the nested-frame model is not viable inside a VS Code webview (Chromium intersects inherited CSP policies into srcdoc documents; the proxy's meta CSP cannot re-admit `'unsafe-inline'` once the delivered nonce+strict-dynamic policy is inherited). Adopt render-into-proxy: the proxy document renders app HTML directly and executes app scripts via `document.createElement("script")` insertion, which satisfies the inherited `'strict-dynamic'` chain. Isolation is weaker (app code runs in the proxy document's own origin context under the inherited webview CSP) and **requires architecture re-review before Task 9**. `mcpAppsEnabled` remains default-off.
+
+Three product bugs were found and fixed en route (all covered by `src/core/webview/__tests__/ClineProvider.spec.ts`): (1) raw `</script>` inside the injected `MCP_APP_SANDBOX_PROXY_HTML` JSON literal killed the inline injection script — `<` is now escaped as `\u003c`; (2) webview CSP `frame-src` lacked `blob:`, so the blob-mounted proxy iframe navigated to `chrome-error://` — `blob:` added to dev and prod `frame-src`; (3) the relay-script sha256 hash was computed over CRLF file bytes while browsers normalize script data to LF — the asset is now LF-normalized at read time.
 
 ## Fixture contents
 

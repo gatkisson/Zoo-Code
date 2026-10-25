@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { getMcpToolUiResourceUri, isMcpServerUiDisabled, type McpServer } from "@roo-code/types"
@@ -23,6 +23,10 @@ interface McpAppFrameProps {
 
 function getSandboxProxyUri(): string {
 	return (window as unknown as { MCP_APP_SANDBOX_PROXY_URI?: string }).MCP_APP_SANDBOX_PROXY_URI ?? ""
+}
+
+function getInjectedProxyHtml(): string {
+	return (window as unknown as { MCP_APP_SANDBOX_PROXY_HTML?: string }).MCP_APP_SANDBOX_PROXY_HTML ?? ""
 }
 
 // argumentsJson/responseText stay on the props interface (ChatRow's call site is
@@ -53,9 +57,31 @@ export const McpAppFrame = ({
 	// Result-level _meta override first (architecture risk item), then the tool declaration.
 	const uiUri = getMcpToolUiResourceUri(resultMeta) ?? getMcpToolUiResourceUri(toolMeta)
 	const enabled = mcpAppsEnabled && !!uiUri && !isMcpServerUiDisabled(server ?? { config: undefined })
-	// An unset injected proxy URI must disable the frame entirely: <iframe src="">
-	// resolves to the webview document itself and would self-nest it (Task 9 M1).
-	const proxyUri = getSandboxProxyUri()
+	// Primary proxy source: the bundled proxy HTML injected by the extension host,
+	// mounted as a blob: URL. In desktop VS Code, iframe navigations to
+	// asWebviewUri routes are not served by the webview service worker (dev-host
+	// spike run 9), so a network-URL proxy never loads; blob: sidesteps the
+	// network entirely. The blob document inherits the webview CSP, which admits
+	// the proxy's trusted relay script via its sha256 hash (ClineProvider).
+	const injectedProxyHtml = useMemo(() => getInjectedProxyHtml(), [])
+	const proxyBlobUrl = useMemo(() => {
+		if (!injectedProxyHtml) {
+			return ""
+		}
+		return URL.createObjectURL(new Blob([injectedProxyHtml], { type: "text/html" }))
+	}, [injectedProxyHtml])
+	useEffect(() => {
+		return () => {
+			if (proxyBlobUrl) {
+				URL.revokeObjectURL(proxyBlobUrl)
+			}
+		}
+	}, [proxyBlobUrl])
+	// Fallback: the asWebviewUri route (works in webviews that do serve it, e.g.
+	// vscode.dev). An unset proxy source must disable the frame entirely:
+	// <iframe src=""> resolves to the webview document itself and would
+	// self-nest it (Task 9 M1).
+	const proxySource = proxyBlobUrl || getSandboxProxyUri()
 
 	useEffect(() => {
 		if (!enabled || !uiUri) {
@@ -183,7 +209,7 @@ export const McpAppFrame = ({
 		return () => window.removeEventListener("message", onMessage)
 	}, [])
 
-	if (!enabled || !proxyUri) {
+	if (!enabled || !proxySource) {
 		return null
 	}
 
@@ -232,8 +258,13 @@ export const McpAppFrame = ({
 				key={uiUri} // remount (and refire onLoad) when the UI resource changes (Task 9 M2)
 				ref={iframeRef}
 				title={`MCP App: ${serverName}/${toolName}`}
-				src={proxyUri}
-				sandbox="allow-scripts allow-forms allow-popups"
+				// No sandbox attribute on the proxy frame: sandboxed frames
+				// inherit the webview's delivered CSP in desktop VS Code, and the
+				// blob document needs to run its relay script (admitted by the
+				// sha256 hash in the webview CSP; dev-host spike findings). The
+				// proxy is trusted bundled code; hostile app HTML stays sandboxed
+				// inside it (srcdoc + sandbox).
+				src={proxySource}
 				style={{ height }} // dynamic px value; not expressible as a Tailwind class
 				className="w-full border border-vscode-border rounded-xs mt-2 bg-vscode-editor-background"
 				onLoad={onIframeLoad}

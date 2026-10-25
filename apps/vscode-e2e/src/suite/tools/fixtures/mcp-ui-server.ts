@@ -78,7 +78,17 @@ async function handleMessage(message: JsonRpcMessage) {
 						{
 							uri: "ui://demo/card",
 							mimeType: "text/html;profile=mcp-app",
-							text: "<!DOCTYPE html><html><body><div id='card'>hello-mcp-app</div></body></html>",
+							text: [
+								"<!DOCTYPE html><html><body>",
+								"<div id='card'>hello-mcp-app</div>",
+								// MCP Apps dev-host spike probe (throwaway, spike-labeled): the inline
+								// script executes inside the srcdoc frame (proves inner-script execution
+								// under the proxy meta-CSP) and posts to the sandbox proxy, which relays
+								// it verbatim to the webview host window. Additive for the smoke test,
+								// which only asserts the ui-read marker file.
+								'<script>parent.postMessage({ type: "SPIKE_RELAY_PROBE", nonce: "spike-relay-probe-001" }, "*")</script>',
+								"</body></html>",
+							].join(""),
 						},
 					],
 				})

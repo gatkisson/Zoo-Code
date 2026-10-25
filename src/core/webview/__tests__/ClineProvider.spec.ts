@@ -1,5 +1,7 @@
 // pnpm --filter roo-cline test core/webview/__tests__/ClineProvider.spec.ts
 
+import * as crypto from "crypto"
+import * as fs from "fs"
 import * as path from "path"
 import { TaskRegistry } from "../../task/TaskRegistry"
 
@@ -2963,10 +2965,39 @@ describe("ClineProvider", () => {
 
 		const html = String(mockWebviewView.webview.html)
 
-		expect(html).toContain("frame-src vscode-webview://test-csp-source")
-		// Must not weaken script-src: production keeps nonce + strict-dynamic, no unsafe-inline.
+		// The MCP Apps sandbox proxy mounts as a blob: document (dev-host spike:
+		// iframe navigations to the asWebviewUri CDN route do not resolve in
+		// desktop VS Code, and a frame-src without blob: resolves the blob
+		// navigation to chrome-error). cspSource stays for the asWebviewUri
+		// fallback route.
+		expect(html).toContain("frame-src vscode-webview://test-csp-source blob:")
+		// The blob-mounted proxy document inherits the webview CSP; its trusted
+		// inline relay script is admitted by a sha256 hash (dev-host spike:
+		// opaque-origin frames inherit the delivered CSP). The hash must be
+		// computed over LF-normalized script bytes — the browser normalizes CRLF
+		// in script data, so hashing raw CRLF file bytes breaks the relay on
+		// CRLF checkouts.
+		expect(html).toMatch(/script-src [^"']*'sha256-[A-Za-z0-9+/=]+'/)
+		const proxyHtml = fs.readFileSync(
+			path.join(__dirname, "..", "..", "..", "assets", "mcp-app-sandbox-proxy.html"),
+			"utf8",
+		)
+		const relayScript = proxyHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? ""
+		const expectedHash = crypto
+			.createHash("sha256")
+			.update(relayScript.replace(/\r\n/g, "\n"), "utf8")
+			.digest("base64")
+		expect(html).toContain(`'sha256-${expectedHash}'`)
+		// Must not weaken script-src: production keeps nonce + strict-dynamic, no
+		// unsafe-inline. Scope to the DELIVERED CSP meta tag: the injected proxy
+		// document (MCP_APP_SANDBOX_PROXY_HTML) embeds its own meta-CSP with
+		// `script-src 'unsafe-inline'`, which is the app-hosting layer's policy,
+		// not a weakening of the webview's delivered CSP.
 		expect(html).toContain("'strict-dynamic'")
-		expect(html).not.toContain("script-src 'unsafe-inline'")
+		const deliveredScriptSrc =
+			html.match(/<meta http-equiv="Content-Security-Policy" content="[^"]*?script-src ([^;]+);/)?.[1] ?? ""
+		expect(deliveredScriptSrc.length).toBeGreaterThan(0)
+		expect(deliveredScriptSrc).not.toContain("'unsafe-inline'")
 	})
 
 	test("injects the sandbox proxy URI into the production webview HTML", async () => {
@@ -2986,6 +3017,16 @@ describe("ClineProvider", () => {
 
 			expect(html).toContain("window.MCP_APP_SANDBOX_PROXY_URI =")
 			expect(html).toContain("mcp-app-sandbox-proxy.html")
+			// Primary proxy source: the bundled proxy HTML itself, injected as a
+			// JSON string global so the webview can mount it as a blob: URL.
+			// The payload must be unicode-escaped: a raw `<` (e.g. the proxy's own
+			// closing script tag) inside an inline <script> block terminates the
+			// injection early and kills every window.* global (dev-host spike).
+			const injectionStart = html.indexOf("window.MCP_APP_SANDBOX_PROXY_HTML =")
+			expect(injectionStart).toBeGreaterThan(-1)
+			const injectedPayload = html.slice(injectionStart, html.indexOf("</script>", injectionStart))
+			expect(injectedPayload).not.toContain("<script")
+			expect(injectedPayload).toContain("\\u003c!DOCTYPE html>")
 		} finally {
 			joinPathMock.mockReset()
 		}

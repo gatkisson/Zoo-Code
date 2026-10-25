@@ -53,6 +53,7 @@ describe("McpAppFrame", () => {
 		state.mcpAppsEnabled = true
 		;(window as unknown as { MCP_APP_SANDBOX_PROXY_URI?: string }).MCP_APP_SANDBOX_PROXY_URI =
 			"vscode-webview://test-csp/assets/mcp-app-sandbox-proxy.html"
+		;(window as unknown as { MCP_APP_SANDBOX_PROXY_HTML?: string }).MCP_APP_SANDBOX_PROXY_HTML = ""
 		;(requestMcpApp as Mock).mockResolvedValue({
 			contents: [
 				{ uri: "ui://demo/card", mimeType: "text/html;profile=mcp-app", text: "<html><body>ok</body></html>" },
@@ -85,8 +86,27 @@ describe("McpAppFrame", () => {
 
 		const iframe = container.querySelector("iframe")
 		expect(iframe).not.toBeNull()
-		expect(iframe!.getAttribute("sandbox")).toBe("allow-scripts allow-forms allow-popups")
+		// With no injected proxy HTML the component falls back to the URI route.
 		expect((iframe! as HTMLIFrameElement).src).toContain("mcp-app-sandbox-proxy.html")
+		// Regression pin (dev-host spike): the proxy frame must NOT carry a
+		// sandbox attribute. Sandboxed (opaque-origin) frames bypass the webview
+		// service worker that serves asWebviewUri routes in desktop VS Code and
+		// inherit the webview's delivered CSP, which refuses the proxy's inline
+		// relay script. App isolation stays on the proxy's inner srcdoc frame.
+		expect(iframe!.hasAttribute("sandbox")).toBe(false)
+	})
+
+	it("mounts the proxy as a blob: URL when the extension injects the proxy HTML", async () => {
+		// Primary route (dev-host spike): desktop VS Code never serves the URI
+		// route to iframe navigations, so the injected HTML must win over it.
+		;(window as unknown as { MCP_APP_SANDBOX_PROXY_HTML?: string }).MCP_APP_SANDBOX_PROXY_HTML =
+			"<!DOCTYPE html><html><body>proxy</body></html>"
+		const { container } = render(<McpAppFrame {...baseProps} />)
+
+		await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull())
+		const iframe = container.querySelector("iframe") as HTMLIFrameElement
+		expect(iframe.src.startsWith("blob:")).toBe(true)
+		expect(iframe.hasAttribute("sandbox")).toBe(false)
 	})
 
 	it("prefers a result-level _meta UI override over the tool declaration", async () => {
@@ -147,8 +167,9 @@ describe("McpAppFrame", () => {
 		hostile.remove()
 	})
 
-	it("renders nothing when the sandbox proxy URI is unset", async () => {
+	it("renders nothing when no proxy source is available", async () => {
 		;(window as unknown as { MCP_APP_SANDBOX_PROXY_URI?: string }).MCP_APP_SANDBOX_PROXY_URI = ""
+		;(window as unknown as { MCP_APP_SANDBOX_PROXY_HTML?: string }).MCP_APP_SANDBOX_PROXY_HTML = ""
 		const { container } = render(<McpAppFrame {...baseProps} />)
 
 		await waitFor(() => expect(requestMcpApp).toHaveBeenCalledTimes(1))
@@ -167,6 +188,7 @@ describe("McpAppFrame approval gate", () => {
 		state.mcpAppsEnabled = true
 		;(window as unknown as { MCP_APP_SANDBOX_PROXY_URI?: string }).MCP_APP_SANDBOX_PROXY_URI =
 			"vscode-webview://test-csp/assets/mcp-app-sandbox-proxy.html"
+		;(window as unknown as { MCP_APP_SANDBOX_PROXY_HTML?: string }).MCP_APP_SANDBOX_PROXY_HTML = ""
 		;(requestMcpApp as Mock).mockResolvedValue({
 			contents: [
 				{ uri: "ui://demo/card", mimeType: "text/html;profile=mcp-app", text: "<html><body>ok</body></html>" },
