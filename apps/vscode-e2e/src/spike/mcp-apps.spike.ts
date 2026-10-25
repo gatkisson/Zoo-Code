@@ -369,10 +369,9 @@ test("MCP Apps dev-host spike: all four criteria observed in the real webview", 
 
 		// Render-into-proxy fallback: the app renders INSIDE the blob-mounted proxy
 		// document (no nested srcdoc frame). The card text is the c2a artifact.
-		const proxyFrame = page!.frames().find((frame) => frame.url().startsWith("blob:"))
-		await expect
-			.poll(() => page!.frames().some((frame) => frame.url().startsWith("blob:")), { timeout: 60_000 })
-			.toBe(true)
+		const isProxyFrame = (frame: Frame) => frame.url().startsWith("blob:")
+		await expect.poll(() => page!.frames().some(isProxyFrame), { timeout: 60_000 }).toBe(true)
+		const proxyFrame = page!.frames().find(isProxyFrame)
 		const srcdocCardText = await proxyFrame!.locator("#card").textContent()
 
 		// Criterion 3: the webview app itself is healthy end to end (the task
