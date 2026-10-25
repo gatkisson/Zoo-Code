@@ -4,31 +4,73 @@ import vm from "node:vm"
 import { fileURLToPath } from "node:url"
 
 /**
- * Behavioral contract tests for the bundled MCP Apps sandbox proxy relay
- * (Task 8 review finding I1). The shipped HTML's inline script is executed
- * verbatim in a `node:vm` sandbox with stubbed window/document objects so
- * that nested-frame `event.source` identity semantics can be simulated
- * exactly. jsdom cannot faithfully model two distinct frame windows
- * relaying postMessage (the inner srcdoc frame never loads scripts), so the
- * relay direction is proven here at the artifact level; end-to-end proof in
- * the real dev host remains part of the human F5 spike (Task 9 report).
+ * Behavioral contract tests for the bundled MCP Apps sandbox proxy
+ * (render-into-proxy fallback, spike Decision: FALLBACK). The shipped HTML's
+ * inline script is executed verbatim in a `node:vm` sandbox with stubbed
+ * window/document/DOMParser objects: Chromium inherits the webview CSP into
+ * nested srcdoc frames, so the proxy no longer nests — it parses the app HTML,
+ * renders non-script nodes into its own document, and re-executes app scripts
+ * by creating fresh <script> elements (admitted via strict-dynamic propagation
+ * from the hash-admitted relay script). The stubs below cover every
+ * parsed-document API the shipped script calls; fixture documents are
+ * hand-built per test to keep the exercised surface explicit.
  */
 
 const assetPath = path.resolve(fileURLToPath(import.meta.url), "../../mcp-app-sandbox-proxy.html")
 
-type PostMessageFn = ReturnType<typeof vi.fn>
-
-type FakeFrame = {
-	contentWindow: { postMessage: PostMessageFn }
-	setAttribute: PostMessageFn
-	style: Record<string, string>
-	remove: PostMessageFn
-	srcdoc: string
-}
+type MockFn = ReturnType<typeof vi.fn>
 
 type MessageListener = (event: { data: unknown; source: unknown }) => void
 
-function loadProxy() {
+/** A node of the fake *parsed* document produced by the DOMParser stub. */
+type FakeParsedNode = {
+	nodeName: string
+	textContent: string
+	getAttribute: (name: string) => string | null
+}
+
+/** A live element produced by document.createElement / document.importNode. */
+type FakeElement = {
+	tagName: string
+	id?: string
+	textContent: string
+	src: string
+	type: string
+	style: Record<string, string>
+	imported?: FakeParsedNode
+	setAttribute: MockFn
+	remove: MockFn
+	appendChild: MockFn
+}
+
+/** Hand-built parsed-document shape the DOMParser stub returns per fixture HTML. */
+type ParsedFixture = {
+	bodyChildNodes?: FakeParsedNode[]
+	bodyScripts?: FakeParsedNode[]
+	headScripts?: FakeParsedNode[]
+	headStyles?: FakeParsedNode[]
+}
+
+function parsedNode(
+	nodeName: string,
+	attrs: { textContent?: string; src?: string; type?: string } = {},
+): FakeParsedNode {
+	return {
+		nodeName,
+		textContent: attrs.textContent ?? "",
+		getAttribute: (name: string) => {
+			if (name === "src") {
+				return attrs.src ?? null
+			}
+			if (name === "type") {
+				return attrs.type ?? null
+			}
+			return null
+		},
+	}
+}
+
+function loadProxy(fixtures: Record<string, ParsedFixture> = {}) {
 	const html = fs.readFileSync(assetPath, "utf8")
 	const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1]
 	if (!script) {
@@ -37,36 +79,73 @@ function loadProxy() {
 
 	const listeners: MessageListener[] = []
 	const parent = { postMessage: vi.fn() }
-	const innerContentWindow = { postMessage: vi.fn() }
-	const frames: FakeFrame[] = []
-	const documentStub = {
-		createElement: vi.fn(() => {
-			const frame: FakeFrame = {
-				contentWindow: innerContentWindow,
-				setAttribute: vi.fn(),
-				style: {},
-				remove: vi.fn(),
-				srcdoc: "",
-			}
-			frames.push(frame)
-			return frame
-		}),
-		body: { appendChild: vi.fn() },
+	const createdElements: FakeElement[] = []
+	const importedNodes: FakeElement[] = []
+
+	const makeElement = (tagName: string): FakeElement => {
+		const el: FakeElement = {
+			tagName,
+			textContent: "",
+			src: "",
+			type: "",
+			style: {},
+			setAttribute: vi.fn(),
+			remove: vi.fn(),
+			appendChild: vi.fn(),
+		}
+		createdElements.push(el)
+		return el
 	}
+
+	const documentStub = {
+		createElement: vi.fn((tag: string) => makeElement(tag)),
+		importNode: vi.fn((node: FakeParsedNode) => {
+			const copy = makeElement(node.nodeName)
+			copy.imported = node
+			importedNodes.push(copy)
+			return copy
+		}),
+		body: { appendChild: vi.fn((_node: FakeElement) => {}) },
+		head: { appendChild: vi.fn((_node: FakeElement) => {}) },
+	}
+
+	class DOMParserStub {
+		parseFromString(source: string) {
+			const fixture = fixtures[source] ?? {}
+			return {
+				body: {
+					childNodes: fixture.bodyChildNodes ?? [],
+					querySelectorAll: (selector: string) => (selector === "script" ? (fixture.bodyScripts ?? []) : []),
+				},
+				querySelectorAll: (selector: string) => {
+					if (selector === "head script") {
+						return fixture.headScripts ?? []
+					}
+					if (selector === "head style, head link[rel='stylesheet']") {
+						return fixture.headStyles ?? []
+					}
+					return []
+				},
+			}
+		}
+	}
+
 	const windowStub = {
 		parent,
 		addEventListener: (_type: string, listener: MessageListener) => listeners.push(listener),
 	}
 
-	vm.runInContext(script, vm.createContext({ window: windowStub, document: documentStub }))
+	vm.runInContext(script, vm.createContext({ window: windowStub, document: documentStub, DOMParser: DOMParserStub }))
 
 	return {
 		listeners,
 		parent,
-		innerContentWindow,
-		frames,
+		createdElements,
+		importedNodes,
 		createElement: documentStub.createElement,
-		appendChild: documentStub.body.appendChild,
+		importNode: documentStub.importNode,
+		bodyAppendChild: documentStub.body.appendChild,
+		headAppendChild: documentStub.head.appendChild,
 		/** Simulate a `message` event delivered to every registered window listener. */
 		dispatch(source: unknown, data: unknown) {
 			for (const listener of [...listeners]) {
@@ -76,67 +155,121 @@ function loadProxy() {
 	}
 }
 
-const mountFromParent = (proxy: ReturnType<typeof loadProxy>) => {
-	proxy.dispatch(proxy.parent, { type: "mcp-app-set-html", html: "<html><body>app</body></html>" })
-}
+describe("mcp-app-sandbox-proxy render-into-proxy", () => {
+	it("renders app HTML into the proxy document and re-executes scripts as new script elements", () => {
+		const html = `<html><body><div id="card"></div><script>evil()</script></body></html>`
+		const card = parsedNode("DIV")
+		const evil = parsedNode("SCRIPT", { textContent: "evil()" })
+		const proxy = loadProxy({ [html]: { bodyChildNodes: [card, evil], bodyScripts: [evil] } })
 
-describe("mcp-app-sandbox-proxy relay direction", () => {
-	it("mounts app HTML received from the parent webview", () => {
-		const proxy = loadProxy()
+		proxy.dispatch(proxy.parent, { type: "mcp-app-set-html", html })
 
-		mountFromParent(proxy)
+		expect(proxy.createElement).toHaveBeenCalledWith("div")
+		const container = proxy.createdElements.find((el) => el.tagName === "div")
+		expect(container?.id).toBe("mcp-app-root")
+		expect(proxy.importNode).toHaveBeenCalledWith(card, true)
+		const importedCard = proxy.importedNodes[0]
+		expect(importedCard?.imported).toBe(card)
+		expect(container?.appendChild).toHaveBeenCalledWith(importedCard)
+		expect(proxy.bodyAppendChild).toHaveBeenCalledWith(container)
 
-		expect(proxy.createElement).toHaveBeenCalledWith("iframe")
-		expect(proxy.frames).toHaveLength(1)
-		expect(proxy.frames[0].srcdoc).toBe("<html><body>app</body></html>")
-		expect(proxy.appendChild).toHaveBeenCalledWith(proxy.frames[0])
+		const createdScripts = proxy.createdElements.filter((el) => el.tagName === "script")
+		expect(createdScripts).toHaveLength(1)
+		expect(createdScripts[0].textContent).toBe("evil()")
+		expect(proxy.bodyAppendChild).toHaveBeenCalledWith(createdScripts[0])
+
+		// Render-into-proxy: no nested frame is ever created.
+		expect(proxy.createElement).not.toHaveBeenCalledWith("iframe")
 	})
 
-	it("forwards non-control messages from the parent webview into the app frame", () => {
-		const proxy = loadProxy()
-		mountFromParent(proxy)
+	it("re-executes external src scripts preserving src and type", () => {
+		const html = `<html><body><script src="https://cdn.example/app.js" type="module"></script></body></html>`
+		const remote = parsedNode("SCRIPT", { src: "https://cdn.example/app.js", type: "module" })
+		const proxy = loadProxy({ [html]: { bodyChildNodes: [remote], bodyScripts: [remote] } })
 
-		const rpc = { jsonrpc: "2.0", method: "ping", id: 1 }
-		proxy.dispatch(proxy.parent, rpc)
+		proxy.dispatch(proxy.parent, { type: "mcp-app-set-html", html })
 
-		expect(proxy.innerContentWindow.postMessage).toHaveBeenCalledWith(rpc, "*")
+		const createdScripts = proxy.createdElements.filter((el) => el.tagName === "script")
+		expect(createdScripts).toHaveLength(1)
+		expect(createdScripts[0].src).toBe("https://cdn.example/app.js")
+		expect(createdScripts[0].type).toBe("module")
+		expect(createdScripts[0].textContent).toBe("")
 	})
 
-	it("relays messages from the app frame verbatim to the parent webview", () => {
+	it("imports head style and link nodes into the proxy head", () => {
+		const html = `<html><head><style>body{}</style><link rel="stylesheet" href="https://cdn.example/app.css" /></head><body></body></html>`
+		const style = parsedNode("STYLE", { textContent: "body{}" })
+		const link = parsedNode("LINK")
+		const proxy = loadProxy({ [html]: { headStyles: [style, link] } })
+
+		proxy.dispatch(proxy.parent, { type: "mcp-app-set-html", html })
+
+		expect(proxy.importNode).toHaveBeenCalledWith(style, true)
+		expect(proxy.importNode).toHaveBeenCalledWith(link, true)
+		expect(proxy.importedNodes).toHaveLength(2)
+		for (const copy of proxy.importedNodes) {
+			expect(proxy.headAppendChild).toHaveBeenCalledWith(copy)
+		}
+	})
+
+	it("removes the previous app's nodes on re-mount", () => {
+		const htmlA = `<html><body><div id="a"></div><script>a()</script></body></html>`
+		const htmlB = `<html><body><span id="b"></span></body></html>`
+		const divA = parsedNode("DIV")
+		const scriptA = parsedNode("SCRIPT", { textContent: "a()" })
+		const spanB = parsedNode("SPAN")
+		const proxy = loadProxy({
+			[htmlA]: { bodyChildNodes: [divA, scriptA], bodyScripts: [scriptA] },
+			[htmlB]: { bodyChildNodes: [spanB] },
+		})
+
+		proxy.dispatch(proxy.parent, { type: "mcp-app-set-html", html: htmlA })
+		// The injected set is exactly what reached body/head appendChild; the
+		// imported body node hangs off the container and goes with it.
+		const firstMount = [
+			...proxy.bodyAppendChild.mock.calls.map((call) => call[0]),
+			...proxy.headAppendChild.mock.calls.map((call) => call[0]),
+		]
+		expect(firstMount).toHaveLength(2) // container + re-executed script
+
+		proxy.dispatch(proxy.parent, { type: "mcp-app-set-html", html: htmlB })
+
+		for (const node of firstMount) {
+			expect(node.remove).toHaveBeenCalled()
+		}
+	})
+
+	it("drops mcp-app-set-html arriving from non-parent sources", () => {
+		const html = `<html><body><div id="card"></div></body></html>`
+		const proxy = loadProxy({ [html]: { bodyChildNodes: [parsedNode("DIV")] } })
+		const innerAppWindow = { postMessage: vi.fn() }
+
+		proxy.dispatch(innerAppWindow, { type: "mcp-app-set-html", html })
+
+		expect(proxy.createElement).not.toHaveBeenCalledWith("div")
+	})
+
+	it("does not echo parent-origin non-control messages back to the parent", () => {
 		const proxy = loadProxy()
-		mountFromParent(proxy)
+		proxy.dispatch(proxy.parent, { type: "mcp-app-set-html", html: "<html><body>app</body></html>" })
 		proxy.parent.postMessage.mockClear() // drop the parse-time ready ping
 
-		const rpc = { jsonrpc: "2.0", result: {}, id: 1 }
-		proxy.dispatch(proxy.innerContentWindow, rpc)
+		proxy.dispatch(proxy.parent, { jsonrpc: "2.0", method: "ping", id: 1 })
 
-		expect(proxy.parent.postMessage).toHaveBeenCalledWith(rpc, "*")
-	})
-
-	it("does not echo webview-origin messages back to the parent webview", () => {
-		const proxy = loadProxy()
-		mountFromParent(proxy)
-		proxy.parent.postMessage.mockClear() // drop the parse-time ready ping
-
-		proxy.dispatch(proxy.parent, { jsonrpc: "2.0", method: "ping", id: 2 })
-
+		// No relay listener remains: apps listen in-document, so parent-origin
+		// non-control messages are simply ignored (never re-posted anywhere).
 		expect(proxy.parent.postMessage).not.toHaveBeenCalled()
-	})
-
-	it("drops mcp-app-set-html control messages arriving from the app frame", () => {
-		const proxy = loadProxy()
-		mountFromParent(proxy)
-		proxy.parent.postMessage.mockClear() // drop the parse-time ready ping
-
-		proxy.dispatch(proxy.innerContentWindow, { type: "mcp-app-set-html", html: "<script>evil()</script>" })
-
-		expect(proxy.frames).toHaveLength(1) // control is proxy-only: no second mount
-		expect(proxy.parent.postMessage).not.toHaveBeenCalled() // and never relayed to the webview
 	})
 
 	it("pings the parent webview at parse time (ready signal)", () => {
 		const proxy = loadProxy()
 
 		expect(proxy.parent.postMessage).toHaveBeenCalledWith({ type: "mcp-app-sandbox-proxy-ready" }, "*")
+	})
+
+	it("carries a meta CSP that admits external app scripts under strict-dynamic inheritance", () => {
+		const html = fs.readFileSync(assetPath, "utf8")
+
+		expect(html).toContain("script-src 'unsafe-inline' 'unsafe-eval' https: data: blob:")
 	})
 })

@@ -3,57 +3,63 @@
 	<head>
 		<meta charset="utf-8" />
 		<!--
-			Sandbox proxy for MCP Apps (docs/architecture/mcp-apps-ui-support.md, decision a).
-			This document is trusted and bundled; the APP HTML it hosts is hostile.
-			Its own meta-CSP governs the inner srcdoc frame (srcdoc inherits the
-			embedding document's policy), so app inline scripts run while the
-			top-level webview CSP stays untouched apart from frame-src.
+			Sandbox proxy for MCP Apps (docs/architecture/mcp-apps-ui-support.md,
+			spike Decision: FALLBACK). This document is trusted and bundled; the
+			APP HTML it hosts is hostile. Chromium inherits the webview's CSP
+			(nonce + 'strict-dynamic') into nested srcdoc frames, so app inline
+			scripts can never execute in a nested frame; instead this document
+			renders the app HTML directly into its own DOM and re-executes app
+			script elements via createElement insertion. Isolation = the outer
+			opaque-origin sandbox set by McpAppFrame (no allow-same-origin -> no
+			access to webview DOM, vscode API, or extension state); app scripts
+			run under the inherited webview CSP via strict-dynamic propagation
+			from the hash-admitted relay script below.
 		-->
 		<meta
 			http-equiv="Content-Security-Policy"
-			content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob: https:; font-src data:; connect-src *; frame-src 'self';" />
+			content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https: data: blob:; style-src 'unsafe-inline' https:; img-src data: blob: https:; font-src data: https:; connect-src *; frame-src 'self';" />
 	</head>
 	<body>
 		<script>
 			"use strict"
-			let inner = null
-
+			let injected = []
 			function mountApp(html) {
-				if (inner) {
-					inner.remove()
+				for (const node of injected) node.remove()
+				injected = []
+				const doc = new DOMParser().parseFromString(html, "text/html")
+				const container = document.createElement("div")
+				container.id = "mcp-app-root"
+				const scripts = Array.from(doc.querySelectorAll("head script")).concat(Array.from(doc.body.querySelectorAll("script")))
+				for (const node of Array.from(doc.body.childNodes)) {
+					if (node.nodeName === "SCRIPT") continue
+					container.appendChild(document.importNode(node, true))
 				}
-				// Opaque origin: no allow-same-origin -> no access to webview DOM,
-				// vscode API, or extension state.
-				inner = document.createElement("iframe")
-				inner.setAttribute("sandbox", "allow-scripts allow-forms allow-popups")
-				inner.style.border = "0"
-				inner.style.width = "100%"
-				inner.style.height = "100%"
-				inner.srcdoc = html
-				document.body.appendChild(inner)
+				document.body.appendChild(container)
+				injected.push(container)
+				for (const style of Array.from(doc.querySelectorAll("head style, head link[rel='stylesheet']"))) {
+					const copy = document.importNode(style, true)
+					document.head.appendChild(copy)
+					injected.push(copy)
+				}
+				for (const script of scripts) {
+					const el = document.createElement("script")
+					const src = script.getAttribute("src")
+					if (src) {
+						el.src = src
+						const type = script.getAttribute("type")
+						if (type) el.type = type
+					} else {
+						el.textContent = script.textContent
+					}
+					document.body.appendChild(el)
+					injected.push(el)
+				}
 			}
-
-			// Webview -> proxy: control messages mount the app; everything else forwards into the app frame.
 			window.addEventListener("message", (event) => {
-				if (event.source !== window.parent) return // ignore inner-frame and any other sources here
+				if (event.source !== window.parent) return
 				const data = event.data
-				if (data && data.type === "mcp-app-set-html" && typeof data.html === "string") {
-					mountApp(data.html)
-					return
-				}
-				if (inner && inner.contentWindow) {
-					inner.contentWindow.postMessage(data, "*")
-				}
+				if (data && data.type === "mcp-app-set-html" && typeof data.html === "string") mountApp(data.html)
 			})
-	
-			// App frame -> webview: relay verbatim.
-			window.addEventListener("message", (event) => {
-				if (!inner || event.source !== inner.contentWindow) return
-				const data = event.data
-				if (data && data.type === "mcp-app-set-html") return // control is proxy-only; defensive drop
-				window.parent.postMessage(data, "*")
-			})
-
 			window.parent.postMessage({ type: "mcp-app-sandbox-proxy-ready" }, "*")
 		</script>
 	</body>
