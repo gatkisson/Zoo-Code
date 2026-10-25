@@ -2,6 +2,10 @@
 // docs/superpowers/plans/spike-results-mcp-apps.md). Automates the four PASS
 // criteria of the manual F5 dev-host spike inside the real VS Code Electron
 // webview and writes a machine-checkable evidence package to out/spike-evidence/.
+// Re-scoped for the render-into-proxy fallback model: the app HTML renders
+// INSIDE the blob-mounted sandbox proxy document (no nested srcdoc app frame),
+// and app inline scripts re-execute there via dynamic insertion, admitted by
+// strict-dynamic propagation from the hash-admitted relay script.
 import fs from "fs/promises"
 import { readFileSync } from "fs"
 import os from "os"
@@ -315,7 +319,10 @@ test("MCP Apps dev-host spike: all four criteria observed in the real webview", 
 		await contentFrame.evaluate(installSpikeProbe)
 		await fs.writeFile(armPath, "armed\n", "utf8")
 
-		// Poll for both spike messages at the webview window (c1+c2b+c4).
+		// Poll for both spike messages at the webview window. c1: app inline script
+		// executed inside the proxy document (strict-dynamic re-execution), witnessed
+		// as the relay probe arriving at the host window; c2b: that same relay probe
+		// is the inner->host witness; c4 rides its source identity (see below).
 		const probeDeadline = Date.now() + 150_000
 		for (;;) {
 			probeState = await readSpikeProbe(contentFrame)
@@ -360,16 +367,13 @@ test("MCP Apps dev-host spike: all four criteria observed in the real webview", 
 			testInfo,
 		)
 
-		// The srcdoc app frame mounting proves the host->inner control delivery
-		// (mcp-app-set-html); its card text is the visible artifact. Electron
-		// reports sandboxed srcdoc frames with an empty URL and a blob: parent;
-		// classic iframes report about:srcdoc. Accept both shapes.
-		const isAppFrame = (frame: Frame) =>
-			frame.url() === "about:srcdoc" ||
-			(frame.url() === "" && frame.parentFrame()?.url().startsWith("blob:") === true)
-		await expect.poll(() => page!.frames().some(isAppFrame), { timeout: 60_000 }).toBe(true)
-		const appFrame = page!.frames().find(isAppFrame)!
-		const srcdocCardText = await appFrame.locator("#card").textContent()
+		// Render-into-proxy fallback: the app renders INSIDE the blob-mounted proxy
+		// document (no nested srcdoc frame). The card text is the c2a artifact.
+		const proxyFrame = page!.frames().find((frame) => frame.url().startsWith("blob:"))
+		await expect
+			.poll(() => page!.frames().some((frame) => frame.url().startsWith("blob:")), { timeout: 60_000 })
+			.toBe(true)
+		const srcdocCardText = await proxyFrame!.locator("#card").textContent()
 
 		// Criterion 3: the webview app itself is healthy end to end (the task
 		// ran through completion and its result renders in the chat UI).

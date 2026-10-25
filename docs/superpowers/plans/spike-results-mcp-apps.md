@@ -2,7 +2,7 @@
 
 Date: 2026-10-11 (authored) · machine-verified 2026-10-24 · VS Code version: 1.100.0 (automated dev-host spike, `apps/vscode-e2e/src/spike/mcp-apps.spike.ts`)
 
-Status: MACHINE-VERIFIED — automated dev-host spike drove a real VS Code 1.100.0 Extension Development Host (Playwright `_electron`, `extensionDevelopmentPath=src`). Evidence: `apps/vscode-e2e/out/spike-evidence/spike-evidence.json` + `spike-diagnostics-post-probe.json` (run of 2026-10-24T10:51Z).
+Status: FALLBACK MACHINE-VERIFIED — render-into-proxy live in dev host. Automated dev-host spike drove a real VS Code 1.100.0 Extension Development Host (Playwright `_electron`, `extensionDevelopmentPath=src`). Evidence: `apps/vscode-e2e/out/spike-evidence/spike-evidence.json` + `spike-diagnostics-post-probe.json` (nested-frame run of 2026-10-24T10:51Z; fallback re-verification run of 2026-10-25T15:39Z — see Results).
 
 Decision: FALLBACK — criterion 1 FAILED; per the FAIL handling below, adopt render-into-proxy (app HTML rendered directly into the proxy document, no inner srcdoc frame). Isolation is weaker than the nested-frame model and **requires architecture re-review before Task 9**. `mcpAppsEnabled` stays default-off (enablement gate closed) until the fallback lands.
 
@@ -45,6 +45,20 @@ Machine-verified 2026-10-24 via the automated dev-host spike (`pnpm --dir apps/v
 Decision: **FALLBACK** — per the FAIL handling above, the nested-frame model is not viable inside a VS Code webview (Chromium intersects inherited CSP policies into srcdoc documents; the proxy's meta CSP cannot re-admit `'unsafe-inline'` once the delivered nonce+strict-dynamic policy is inherited). Adopt render-into-proxy: the proxy document renders app HTML directly and executes app scripts via `document.createElement("script")` insertion, which satisfies the inherited `'strict-dynamic'` chain. Isolation is weaker (app code runs in the proxy document's own origin context under the inherited webview CSP) and **requires architecture re-review before Task 9**. `mcpAppsEnabled` remains default-off.
 
 Three product bugs were found and fixed en route (all covered by `src/core/webview/__tests__/ClineProvider.spec.ts`): (1) raw `</script>` inside the injected `MCP_APP_SANDBOX_PROXY_HTML` JSON literal killed the inline injection script — `<` is now escaped as `\u003c`; (2) webview CSP `frame-src` lacked `blob:`, so the blob-mounted proxy iframe navigated to `chrome-error://` — `blob:` added to dev and prod `frame-src`; (3) the relay-script sha256 hash was computed over CRLF file bytes while browsers normalize script data to LF — the asset is now LF-normalized at read time.
+
+### Fallback re-verification (2026-10-24)
+
+The dev-host spike was re-scoped to the render-into-proxy fallback model — the app HTML renders INSIDE the blob-mounted proxy document (`src/assets/mcp-app-sandbox-proxy.html`), with app inline scripts re-executed via dynamic insertion admitted by strict-dynamic propagation from the hash-admitted relay script; there is no nested srcdoc frame — and re-run against the real VS Code 1.100.0 Extension Development Host (`pnpm --dir apps/vscode-e2e test:spike:mcp-apps`; run of 2026-10-25T15:39Z, result `1 passed`). All criteria now pass, machine-verified from `apps/vscode-e2e/out/spike-evidence/spike-evidence.json`:
+
+| Criterion | Result | Evidence JSON values |
+|---|---|---|
+| c1: app inline script executed inside the proxy document (strict-dynamic re-execution), witnessed as the relay probe arriving at the host window | **PASS** | `c1InnerScriptExecuted: true`; `relayProbe.nonce: "spike-relay-probe-001"` |
+| c2a: host→proxy control delivery renders the card in the blob proxy frame | **PASS** | `c2aHostToInnerDelivery: true`; `srcdocCardText: "hello-mcp-app"` |
+| c2b: proxy→host relay of app traffic | **PASS** | `c2bInnerToHostRelay: true` (same relay probe witness) |
+| c3: webview app unaffected | **PASS** | `c3WebviewAppUnaffected: true`; `completionLandmarkVisible: true` |
+| c4: host-window transport seam (source-gated) | **PASS** | `c4HostWindowSeam: true`; `relayProbe.sourceIsProxyFrame: true` and `ping.sourceIsProxyFrame: true` |
+
+The fallback model is therefore live and machine-verified in the dev host: app scripts execute inside the opaque-origin proxy document and the full AppBridge relay path (proxy→host window with matching `event.source`) works end to end.
 
 ## Fixture contents
 
