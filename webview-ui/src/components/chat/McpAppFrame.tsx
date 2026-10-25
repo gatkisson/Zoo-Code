@@ -258,12 +258,18 @@ export const McpAppFrame = ({
 				key={uiUri} // remount (and refire onLoad) when the UI resource changes (Task 9 M2)
 				ref={iframeRef}
 				title={`MCP App: ${serverName}/${toolName}`}
-				// No sandbox attribute on the proxy frame: sandboxed frames
-				// inherit the webview's delivered CSP in desktop VS Code, and the
-				// blob document needs to run its relay script (admitted by the
-				// sha256 hash in the webview CSP; dev-host spike findings). The
-				// proxy is trusted bundled code; hostile app HTML stays sandboxed
-				// inside it (srcdoc + sandbox).
+				// Render-into-proxy (spike Decision: FALLBACK): app HTML renders
+				// INTO the proxy document, so hostile app code executes in this
+				// frame and isolation moves here. sandbox WITHOUT
+				// allow-same-origin gives the frame an opaque origin, blocking
+				// webview DOM and acquireVsCodeApi access; the blob: URL is
+				// same-origin as the webview when unsandboxed, so this attribute
+				// is what provides isolation on the primary route. The relay
+				// script stays admitted via its sha256 hash in the inherited CSP
+				// and strict-dynamic propagates to app scripts (Task 1 asset).
+				// The blob: primary route sidesteps the service-worker limitation
+				// that only affected the URI fallback.
+				sandbox="allow-scripts allow-forms allow-popups"
 				src={proxySource}
 				style={{ height }} // dynamic px value; not expressible as a Tailwind class
 				className="w-full border border-vscode-border rounded-xs mt-2 bg-vscode-editor-background"

@@ -88,12 +88,12 @@ describe("McpAppFrame", () => {
 		expect(iframe).not.toBeNull()
 		// With no injected proxy HTML the component falls back to the URI route.
 		expect((iframe! as HTMLIFrameElement).src).toContain("mcp-app-sandbox-proxy.html")
-		// Regression pin (dev-host spike): the proxy frame must NOT carry a
-		// sandbox attribute. Sandboxed (opaque-origin) frames bypass the webview
-		// service worker that serves asWebviewUri routes in desktop VS Code and
-		// inherit the webview's delivered CSP, which refuses the proxy's inline
-		// relay script. App isolation stays on the proxy's inner srcdoc frame.
-		expect(iframe!.hasAttribute("sandbox")).toBe(false)
+		// Render-into-proxy fallback (spike Decision: FALLBACK): app code executes IN
+		// the proxy document, so isolation moves to this frame: opaque-origin sandbox
+		// (no allow-same-origin) blocks webview DOM + vscode API access. The relay
+		// script runs under the inherited webview CSP via its sha256 hash; app scripts
+		// via strict-dynamic propagation (Task 1 asset).
+		expect(iframe!.getAttribute("sandbox")).toBe("allow-scripts allow-forms allow-popups")
 	})
 
 	it("mounts the proxy as a blob: URL when the extension injects the proxy HTML", async () => {
@@ -106,7 +106,7 @@ describe("McpAppFrame", () => {
 		await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull())
 		const iframe = container.querySelector("iframe") as HTMLIFrameElement
 		expect(iframe.src.startsWith("blob:")).toBe(true)
-		expect(iframe.hasAttribute("sandbox")).toBe(false)
+		expect(iframe.getAttribute("sandbox")).toBe("allow-scripts allow-forms allow-popups")
 	})
 
 	it("prefers a result-level _meta UI override over the tool declaration", async () => {
