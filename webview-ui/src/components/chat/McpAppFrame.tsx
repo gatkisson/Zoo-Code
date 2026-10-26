@@ -60,7 +60,7 @@ export const McpAppFrame = ({
 	// Primary proxy source: the bundled proxy HTML injected by the extension host,
 	// mounted as a blob: URL. In desktop VS Code, iframe navigations to
 	// asWebviewUri routes are not served by the webview service worker (dev-host
-	// spike run 9), so a network-URL proxy never loads; blob: sidesteps the
+	// spike runs 1–6), so a network-URL proxy never loads; blob: sidesteps the
 	// network entirely. The blob document inherits the webview CSP, which admits
 	// the proxy's trusted relay script via its sha256 hash (ClineProvider).
 	const injectedProxyHtml = useMemo(() => getInjectedProxyHtml(), [])

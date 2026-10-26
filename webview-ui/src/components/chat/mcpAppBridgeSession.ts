@@ -37,9 +37,10 @@ type CallToolHandler = NonNullable<AppBridge["oncalltool"]>
  * lowercase setter properties (`onreadresource` / `oncalltool`), the transport
  * is `PostMessageTransport(iframeWindow, iframeWindow)`, and AppBridge's
  * capability assertions are no-ops in null-client mode, so manual handlers
- * work without an MCP Client. The proxy document (Task 8/9 Step 0) relays
- * inner-frame messages with itself as `event.source`, which satisfies
- * PostMessageTransport's source validation.
+ * work without an MCP Client. App scripts run in the proxy document itself
+ * (render-into-proxy, Task 8/9); AppBridge traffic posted to window.parent (the
+ * webview window) arrives with `event.source` set to the frame's contentWindow,
+ * which satisfies PostMessageTransport's source validation.
  */
 export function createMcpAppBridgeSession(opts: {
 	serverName: string
