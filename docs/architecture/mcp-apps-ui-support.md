@@ -1,6 +1,6 @@
 # MCP Apps UI support architecture
 
-Status: reviewed architecture (validated against the codebase on 2026-10-07). This document is the input for a later implementation-planning task; it is not itself an implementation plan and contains no code changes.
+Status: reviewed architecture (validated against the codebase on 2026-10-07). This document is the input for a later implementation-planning task; it is not itself an implementation plan and contains no code changes. Decision (a) was revised 2026-10-25 to the shipped render-into-proxy model per the dev-host spike (Decision: FALLBACK); see that section.
 
 ## Scope and standard summary
 
@@ -77,7 +77,7 @@ graph LR
 
 1. `fetchToolsList` already carries `_meta` into `McpServer.tools`, which is posted to the webview in `ExtensionState.mcpServers`. With the type change (Phase 1), ChatRow can look up `getToolUiResourceUri(tool)` for the row's `serverName`/`toolName`.
 2. When a `use_mcp_tool` ChatRow renders and the tool declares a UI resource (and the feature flag is on, and the server has not opted out), `McpAppFrame` requests the HTML: webview → extension `mcpAppRequest { method: "resources/read", params: { uri } }` → existing [`readResource()`](../../src/services/mcp/McpHub.ts:2194) → response posted back with the matching `requestId`.
-3. The fetched HTML (text or base64-decoded blob, MIME `text/html;profile=mcp-app`) is handed to the renderer, which loads the bundled sandbox-proxy document and starts the app-bridge handshake, then pushes the tool input/result into the view (`ui/notifications/tool-input`, `tool-result` per the spec notifications).
+3. The fetched HTML (text or base64-decoded blob, MIME `text/html;profile=mcp-app`) is handed to the renderer, which mounts the bundled sandbox-proxy document, renders the app HTML into it, and starts the app-bridge handshake, then pushes the tool input/result into the view (`ui/notifications/tool-input`, `tool-result` per the spec notifications).
 
 ### Flow 2: UI-initiated proxied `tools/call`
 
@@ -111,11 +111,19 @@ sequenceDiagram
 
 ### a. iframe hosting — bundled sandbox-proxy document, not raw `srcdoc`
 
-**Decision:** ship a small `mcp-app-sandbox-proxy.html` inside the extension bundle, load it as the outer iframe via `webview.asWebviewUri(...)` (a `vscode-webview://` URL covered by `${webview.cspSource}`), and let it create the inner `srcdoc` iframe that holds hostile app HTML. Add exactly one CSP directive — `frame-src ${webview.cspSource}` — to **both** the dev CSP ([ClineProvider.ts:1593](../../src/core/webview/ClineProvider.ts:1593)) and the production CSP ([ClineProvider.ts:1688](../../src/core/webview/ClineProvider.ts:1688)).
+**Decision (shipped model, revised 2026-10-25 per the dev-host spike, Decision: FALLBACK):** ship a small `mcp-app-sandbox-proxy.html` inside the extension bundle and mount it as the app iframe itself — primary route a `blob:` URL built from the injected HTML (desktop VS Code's webview service worker does not serve `asWebviewUri` routes; spike runs 1–6), with the `webview.asWebviewUri(...)` route kept as fallback. The frame carries `sandbox="allow-scripts allow-forms allow-popups"` **without** `allow-same-origin` (opaque origin: no access to webview DOM, `vscode` API, or extension state). There is no nested frame: the proxy document parses the fetched app HTML with `DOMParser`, imports non-script nodes into a container div (head styles/links copied into the proxy head), and re-executes app scripts by inserting freshly created script elements into its own document. Admission rides the existing webview CSP: [`readMcpAppSandboxProxyHtml`](../../src/core/webview/ClineProvider.ts:190) computes the relay script's sha256 hash from the asset at read time (LF-normalized) and pins it in `script-src`; `'strict-dynamic'` propagation from that hash-admitted relay script admits every dynamically-inserted app script. The proxy's meta CSP is `default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https: data: blob:; …; connect-src *; frame-src 'self';`. The webview CSP carries `frame-src ${webview.cspSource} blob:` in **both** the dev CSP ([ClineProvider.ts:1593](../../src/core/webview/ClineProvider.ts:1593)) and the production CSP ([ClineProvider.ts:1688](../../src/core/webview/ClineProvider.ts:1688)).
 
-**Rationale:** a `srcdoc` iframe inherits the _embedding document's_ CSP. The webview's production `script-src` is nonce + `strict-dynamic` with no `'unsafe-inline'`, so arbitrary MCP-app HTML (which is full of inline `<script>` tags) would be dead on arrival inside a direct srcdoc frame — unless we weakened the top-level CSP, which we must not do. The proxy document is a separate document with its own meta-CSP that we control; its nested srcdoc frame inherits _that_ policy, giving apps normal script execution while the top-level webview CSP stays unchanged apart from `frame-src`. This is also exactly the hosting model `@mcp-ui/client` expects (`sandbox={{ url }}`), so no fork is needed. The outer iframe uses `sandbox="allow-scripts"` **without** `allow-same-origin` (opaque origin: no access to webview DOM, `vscode` API, or extension state).
+**Rationale:** the original nested design — proxy document creates an inner `srcdoc` frame for hostile app HTML — was machine-disproved in the dev host: Chromium intersects inherited CSP policies into nested documents, so the webview's delivered `script-src ... 'nonce-…' 'strict-dynamic'` policy is inherited by srcdoc frames and app inline scripts can never execute there (spike runs 1–6, witness lines captured; see [`spike-results-mcp-apps.md`](../superpowers/plans/spike-results-mcp-apps.md)). Render-into-proxy keeps the top-level webview CSP unchanged apart from `frame-src` (the hash pin is computed from the shipped asset, never a loosening of the policy), gives apps script execution via strict-dynamic propagation, and collapses app↔host messaging to one hop: app messages arrive at the webview window with `event.source === proxyFrame.contentWindow`, exactly the identity every existing source gate validates.
 
-Rejected alternatives: raw srcdoc in the webview (requires `'unsafe-inline'` — rejected); a local HTTP server for the proxy (the existing [`callbackServer`](../../src/services/mcp/utils/callbackServer.ts) shows we _can_, but it adds a listening socket and `connect-src`/`frame-src` http entries — unnecessary attack surface).
+**Residual risks (accepted):**
+
+- App code shares the proxy document — isolation is DOM caging within the frame, not nested-frame isolation; the outer opaque-origin sandbox is the only boundary between hostile app code and the webview.
+- External `src` scripts depend on strict-dynamic propagation from the relay script **and** on the proxy meta CSP listing `https:` in `script-src`; a missing scheme silently kills CDN-bundled apps (pinned by the asset spec).
+- `connect-src *` keeps app network access (chart CDNs, API calls) — inherent to the standard and the main reason the feature ships opt-in.
+
+**Known nuance (contract-level follow-up candidate):** body-nested scripts are re-executed hoisted to the proxy body — detached from their original parent element — while inert cloned script nodes remain inside the container; an app that walks the DOM around its own script tags sees a different tree than authored.
+
+Rejected alternatives: raw srcdoc in the webview (requires `'unsafe-inline'` — rejected); a local HTTP server for the proxy (the existing [`callbackServer`](../../src/services/mcp/utils/callbackServer.ts) shows we _can_, but it adds a listening socket and `connect-src`/`frame-src` http entries — unnecessary attack surface). The nested-srcdoc proxy design was the original decision; the spike evidence above supersedes it.
 
 ### b. Bridge shape — `AppBridge(null)` + manual handlers over a correlated message pair
 
@@ -161,11 +169,11 @@ Rejected alternatives: raw srcdoc in the webview (requires `'unsafe-inline'` —
 
 ## Security model summary
 
-- **Trust boundary:** hostile MCP-server HTML executes only inside an opaque-origin sandbox iframe hosted by a proxy document; it has no DOM access to the webview, no `vscode` API, no extension state, and its network behavior is governed by the proxy CSP.
+- **Trust boundary:** hostile MCP-server HTML executes only inside the opaque-origin sandboxed proxy document itself (blob-mounted frame; render-into-proxy per Decision a); it has no DOM access to the webview, no `vscode` API, no extension state, and its network behavior is governed by the proxy CSP.
 - **Message gate:** the webview↔host bridge accepts only `{ resources/read (ui:// only), tools/call }`, correlated by `requestId`, with timeouts; the host re-validates server connectivity/disabled state and per-server `disableUi`.
 - **Human-in-the-loop:** UI-initiated tool calls require per-tool `alwaysAllow` or an explicit inline confirmation; global kill switch `mcpAppsEnabled` (default off) plus per-server `disableUi`.
 - **Outbound links:** scheme allowlist before `vscode.env.openExternal`.
-- **Residual, inherent to the standard:** sandboxed apps can still make arbitrary network requests subject to the proxy CSP (chart CDNs, API calls). This is accepted for v1 and is the main reason the feature ships opt-in.
+- **Residual, inherent to the standard:** the proxy CSP's `connect-src *` lets sandboxed apps make arbitrary network requests (chart CDNs, API calls). This is accepted for v1 and is the main reason the feature ships opt-in.
 
 ## Phased task breakdown (for the planning task to expand)
 
@@ -180,7 +188,7 @@ Rejected alternatives: raw srcdoc in the webview (requires `'unsafe-inline'` —
 
 - **Duplicate SDK copies:** `@mcp-ui/client` 7.x depends on the SDK directly (not as peer), so pnpm may nest a second copy in webview-ui. Mitigation: verify with `pnpm why @modelcontextprotocol/sdk` after install; use a pnpm override to pin both to 1.29.0, or drop `@mcp-ui/client` and use `AppBridge` directly. Decide during Phase 4 spike.
 - **ext-apps version line:** 2.x is the moving target (SDK v2 peers). Pinning `^1.7.5` freezes us on a legacy line; plan a migration task when the repo adopts SDK v2.
-- **CSP/nested-frame behavior needs a spike:** srcdoc inheritance semantics inside VS Code webviews should be proven with a throwaway fixture before Phase 4 builds on it. Fallback if nested frames misbehave: render app HTML into the proxy document itself (no inner frame) — weaker isolation, so re-review would be required.
+- **CSP/nested-frame behavior — RESOLVED (2026-10-25):** the dev-host spike proved Chromium intersects inherited CSP policies into nested documents (the webview's `script-src` nonce + `strict-dynamic` is inherited by srcdoc frames, so app inline scripts can never execute there). The planned fallback shipped as the model: render app HTML into the proxy document itself (no inner frame) — weaker isolation, now documented in Decision (a) and machine-verified end-to-end (spike run 7).
 - **`ui/update-model-context` deferred:** no host plumbing exists for arbitrary model-context injection; advertising no support is spec-compliant degradation. Revisit with a dedicated context-injection design.
 - **Per-call UI overrides unverified:** whether MCP Apps allows a tool _result_ `_meta` to override the declared `ui://` resource was not verified against the spec text during this review; if it exists, Phase 1's extractor should read result `_meta` too (the type already carries it).
 - **Capability toggle latency:** capabilities are negotiated at connect time; without a connection refresh on flag change, servers see stale capabilities until restart. Mitigation noted in Decision d.
