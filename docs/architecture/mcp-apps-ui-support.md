@@ -120,6 +120,8 @@ sequenceDiagram
 - App code shares the proxy document — isolation is DOM caging within the frame, not nested-frame isolation; the outer opaque-origin sandbox is the only boundary between hostile app code and the webview.
 - External `src` scripts depend on strict-dynamic propagation from the relay script **and** on the proxy meta CSP listing `https:` in `script-src`; a missing scheme silently kills CDN-bundled apps (pinned by the asset spec).
 - `connect-src *` keeps app network access (chart CDNs, API calls) — inherent to the standard and the main reason the feature ships opt-in.
+- Inline event-handler attributes in app HTML (`onclick="…"` and friends) do not execute: they are parser-created inline handlers, which strict-dynamic does not admit and the inherited nonce-bearing webview policy renders inert. Apps must attach listeners from their own scripts (`addEventListener`).
+- App-nested iframes never load: the proxy meta CSP pins `frame-src 'self'`, and under the opaque-origin sandbox `'self'` resolves to a null origin. Fail-closed by design; apps needing embedded frames need a contract-level follow-up.
 
 **Known nuance (contract-level follow-up candidate):** body-nested scripts are re-executed hoisted to the proxy body — detached from their original parent element — while inert cloned script nodes remain inside the container; an app that walks the DOM around its own script tags sees a different tree than authored.
 
