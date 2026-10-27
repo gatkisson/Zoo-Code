@@ -29,6 +29,20 @@ function getInjectedProxyHtml(): string {
 	return (window as unknown as { MCP_APP_SANDBOX_PROXY_HTML?: string }).MCP_APP_SANDBOX_PROXY_HTML ?? ""
 }
 
+// Module-level singleton for the proxy blob URL (F5 dev-host regression): React's
+// dev-build StrictMode simulation runs effect cleanups immediately after mount, so
+// revoking the blob URL in an unmount cleanup killed the URL under the live iframe
+// navigation (chrome-error://chromewebdata/, empty card; spike runs serve prod
+// assets and never simulated it). The injected HTML is a per-document constant, so
+// every frame shares one long-lived URL and nothing is revoked while referenced.
+let proxyBlobCache: { html: string; url: string } | null = null
+function getProxyBlobUrl(html: string): string {
+	if (!proxyBlobCache || proxyBlobCache.html !== html) {
+		proxyBlobCache = { html, url: URL.createObjectURL(new Blob([html], { type: "text/html" })) }
+	}
+	return proxyBlobCache.url
+}
+
 // argumentsJson/responseText stay on the props interface (ChatRow's call site is
 // final; they are reserved for future app context seeding) but are not
 // destructured yet to satisfy no-unused-vars. alwaysAllow/alwaysAllowMcp feed the
@@ -64,19 +78,10 @@ export const McpAppFrame = ({
 	// network entirely. The blob document inherits the webview CSP, which admits
 	// the proxy's trusted relay script via its sha256 hash (ClineProvider).
 	const injectedProxyHtml = useMemo(() => getInjectedProxyHtml(), [])
-	const proxyBlobUrl = useMemo(() => {
-		if (!injectedProxyHtml) {
-			return ""
-		}
-		return URL.createObjectURL(new Blob([injectedProxyHtml], { type: "text/html" }))
-	}, [injectedProxyHtml])
-	useEffect(() => {
-		return () => {
-			if (proxyBlobUrl) {
-				URL.revokeObjectURL(proxyBlobUrl)
-			}
-		}
-	}, [proxyBlobUrl])
+	const proxyBlobUrl = useMemo(
+		() => (injectedProxyHtml ? getProxyBlobUrl(injectedProxyHtml) : ""),
+		[injectedProxyHtml],
+	)
 	// Fallback: the asWebviewUri route (works in webviews that do serve it, e.g.
 	// vscode.dev). An unset proxy source must disable the frame entirely:
 	// <iframe src=""> resolves to the webview document itself and would

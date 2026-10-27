@@ -1,3 +1,4 @@
+import { StrictMode } from "react"
 import { type Mock } from "vitest"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -107,6 +108,29 @@ describe("McpAppFrame", () => {
 		const iframe = container.querySelector("iframe") as HTMLIFrameElement
 		expect(iframe.src.startsWith("blob:")).toBe(true)
 		expect(iframe.getAttribute("sandbox")).toBe("allow-scripts allow-forms allow-popups")
+	})
+
+	it("keeps the proxy blob URL alive under StrictMode double-mount (dev React)", async () => {
+		// Regression (F5 dev-host repro): React's dev build simulates an
+		// unmount/remount cycle on mount; revoking the blob URL in that cleanup
+		// killed the URL the live iframe was navigating to, leaving it on
+		// chrome-error://chromewebdata/ (empty card). The URL must stay alive.
+		;(window as unknown as { MCP_APP_SANDBOX_PROXY_HTML?: string }).MCP_APP_SANDBOX_PROXY_HTML =
+			"<!DOCTYPE html><html><body>proxy</body></html>"
+		const revoked: string[] = []
+		vi.spyOn(URL, "revokeObjectURL").mockImplementation((url) => void revoked.push(url))
+
+		const { container } = render(
+			<StrictMode>
+				<McpAppFrame {...baseProps} />
+			</StrictMode>,
+		)
+		await waitFor(() => expect(container.querySelector("iframe")).not.toBeNull())
+		const iframe = container.querySelector("iframe") as HTMLIFrameElement
+
+		expect(iframe.src.startsWith("blob:")).toBe(true)
+		expect(revoked).not.toContain(iframe.getAttribute("src"))
+		vi.restoreAllMocks()
 	})
 
 	it("prefers a result-level _meta UI override over the tool declaration", async () => {
