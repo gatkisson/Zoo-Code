@@ -35,7 +35,7 @@ const evidenceDir = path.join(packageRoot, "out", "spike-evidence")
 const packageJson = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8")) as {
 	devDependencies: Record<string, string>
 }
-const vscodeVersion = packageJson.devDependencies["@types/vscode"]!
+const vscodeVersion = process.env.SPIKE_VSCODE_VERSION ?? packageJson.devDependencies["@types/vscode"]!
 
 const SPIKE_NONCE = "spike-relay-probe-001"
 const PROXY_READY_PING = "mcp-app-sandbox-proxy-ready"
