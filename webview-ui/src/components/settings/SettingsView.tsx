@@ -164,6 +164,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 		language,
 		alwaysAllowExecute,
 		destructiveCommandGuardEnabled,
+		alwaysDenyUnapprovedCommands,
 		alwaysAllowMcp,
 		alwaysAllowModeSwitch,
 		alwaysAllowSubtasks,
@@ -188,6 +189,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 		terminalOutputPreviewSize,
 		terminalShellIntegrationTimeout,
 		terminalShellIntegrationDisabled, // Added from upstream
+		collapseCommandOutputByDefault,
 		terminalCommandDelay,
 		terminalPowershellCounter,
 		terminalZshClearEolMark,
@@ -394,6 +396,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 					allowedWriteFiles: allowedWriteFiles ?? [],
 					alwaysAllowExecute: alwaysAllowExecute ?? undefined,
 					destructiveCommandGuardEnabled: destructiveCommandGuardEnabled ?? false,
+					alwaysDenyUnapprovedCommands: alwaysDenyUnapprovedCommands ?? false,
 					alwaysAllowMcp,
 					alwaysAllowModeSwitch,
 					allowedCommands: allowedCommands ?? [],
@@ -415,6 +418,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 					diffFuzzyThreshold,
 					terminalShellIntegrationTimeout: terminalShellIntegrationTimeout ?? 30_000,
 					terminalShellIntegrationDisabled,
+					collapseCommandOutputByDefault,
 					terminalCommandDelay,
 					terminalPowershellCounter,
 					terminalZshClearEolMark,
@@ -825,6 +829,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 								alwaysAllowSubtasks={alwaysAllowSubtasks}
 								alwaysAllowExecute={alwaysAllowExecute}
 								destructiveCommandGuardEnabled={destructiveCommandGuardEnabled}
+								alwaysDenyUnapprovedCommands={alwaysDenyUnapprovedCommands}
 								alwaysAllowFollowupQuestions={alwaysAllowFollowupQuestions}
 								followupAutoApproveTimeoutMs={followupAutoApproveTimeoutMs}
 								allowedCommands={allowedCommands}
@@ -896,6 +901,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 								terminalOutputPreviewSize={terminalOutputPreviewSize}
 								terminalShellIntegrationTimeout={terminalShellIntegrationTimeout}
 								terminalShellIntegrationDisabled={terminalShellIntegrationDisabled}
+								collapseCommandOutputByDefault={collapseCommandOutputByDefault}
 								terminalCommandDelay={terminalCommandDelay}
 								terminalPowershellCounter={terminalPowershellCounter}
 								terminalZshClearEolMark={terminalZshClearEolMark}
