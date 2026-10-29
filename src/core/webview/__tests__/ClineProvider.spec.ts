@@ -1,10 +1,12 @@
 // pnpm --filter roo-cline test core/webview/__tests__/ClineProvider.spec.ts
 
+import * as crypto from "crypto"
 import fs from "fs"
 import * as path from "path"
 import { TaskRegistry } from "../../task/TaskRegistry"
 
 import Anthropic from "@anthropic-ai/sdk"
+import type { Mock } from "vitest"
 import * as vscode from "vscode"
 import axios from "axios"
 
@@ -1211,6 +1213,7 @@ describe("ClineProvider", () => {
 			enableCheckpoints: false,
 			writeDelayMs: 1000,
 			mcpEnabled: true,
+			mcpAppsEnabled: false,
 			mode: defaultModeSlug,
 			customModes: [],
 			experiments: experimentDefault,
@@ -2411,6 +2414,22 @@ describe("ClineProvider", () => {
 		})
 	})
 
+	test("returns mcpAppsEnabled in state posted to webview, defaulting to false", async () => {
+		await provider.resolveWebviewView(mockWebviewView)
+
+		// Same partial-state-mock pattern as the existing "handles mcpEnabled setting correctly" test.
+		// ProviderState carries dozens of required fields; getStateToPostToWebview only reads the
+		// ones it destructures, so the double is kept minimal via `unknown` (last-resort cast).
+		type ProviderState = Awaited<ReturnType<ClineProvider["getState"]>>
+		vi.spyOn(provider, "getState").mockResolvedValueOnce({ mcpAppsEnabled: true } as unknown as ProviderState)
+		let state = await provider.getStateToPostToWebview()
+		expect(state.mcpAppsEnabled).toBe(true)
+
+		vi.spyOn(provider, "getState").mockResolvedValueOnce({} as unknown as ProviderState)
+		state = await provider.getStateToPostToWebview()
+		expect(state.mcpAppsEnabled).toBe(false)
+	})
+
 	it("getStateToPostToWebview passes through defined diffFuzzyThreshold value", async () => {
 		await provider.resolveWebviewView(mockWebviewView)
 		await provider.contextProxy.setValue("diffFuzzyThreshold", 0.5)
@@ -3578,6 +3597,78 @@ describe("ClineProvider", () => {
 				{ name: "test-config", id: "test-id", apiProvider: providerIdentifiers.anthropic },
 			])
 		})
+	})
+
+	test("includes frame-src in the production webview CSP", async () => {
+		await provider.resolveWebviewView(mockWebviewView)
+
+		const html = String(mockWebviewView.webview.html)
+
+		// The MCP Apps sandbox proxy mounts as a blob: document (dev-host spike:
+		// iframe navigations to the asWebviewUri CDN route do not resolve in
+		// desktop VS Code, and a frame-src without blob: resolves the blob
+		// navigation to chrome-error). cspSource stays for the asWebviewUri
+		// fallback route.
+		expect(html).toContain("frame-src vscode-webview://test-csp-source blob:")
+		// The blob-mounted proxy document inherits the webview CSP; its trusted
+		// inline relay script is admitted by a sha256 hash (dev-host spike:
+		// opaque-origin frames inherit the delivered CSP). The hash must be
+		// computed over LF-normalized script bytes — the browser normalizes CRLF
+		// in script data, so hashing raw CRLF file bytes breaks the relay on
+		// CRLF checkouts.
+		expect(html).toMatch(/script-src [^"']*'sha256-[A-Za-z0-9+/=]+'/)
+		const proxyHtml = fs.readFileSync(
+			path.join(__dirname, "..", "..", "..", "assets", "mcp-app-sandbox-proxy.html"),
+			"utf8",
+		)
+		const relayScript = proxyHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? ""
+		const expectedHash = crypto
+			.createHash("sha256")
+			.update(relayScript.replace(/\r\n/g, "\n"), "utf8")
+			.digest("base64")
+		expect(html).toContain(`'sha256-${expectedHash}'`)
+		// Must not weaken script-src: production keeps nonce + strict-dynamic, no
+		// unsafe-inline. Scope to the DELIVERED CSP meta tag: the injected proxy
+		// document (MCP_APP_SANDBOX_PROXY_HTML) embeds its own meta-CSP with
+		// `script-src 'unsafe-inline'`, which is the app-hosting layer's policy,
+		// not a weakening of the webview's delivered CSP.
+		expect(html).toContain("'strict-dynamic'")
+		const deliveredScriptSrc =
+			html.match(/<meta http-equiv="Content-Security-Policy" content="[^"]*?script-src ([^;]+);/)?.[1] ?? ""
+		expect(deliveredScriptSrc.length).toBeGreaterThan(0)
+		expect(deliveredScriptSrc).not.toContain("'unsafe-inline'")
+	})
+
+	test("injects the sandbox proxy URI into the production webview HTML", async () => {
+		// Resolve URIs from the path segments ClineProvider passes so the injected
+		// global provably points at the bundled proxy asset. mockWebviewView is
+		// rebuilt per test; Uri.joinPath is a module-level mock, so restore it after.
+		const joinPathMock = vscode.Uri.joinPath as Mock
+		joinPathMock.mockImplementation((...segments: unknown[]) =>
+			segments.filter((segment) => typeof segment === "string").join("/"),
+		)
+		mockWebviewView.webview.asWebviewUri = vi.fn((uri: unknown) => String(uri))
+
+		try {
+			await provider.resolveWebviewView(mockWebviewView)
+
+			const html = String(mockWebviewView.webview.html)
+
+			expect(html).toContain("window.MCP_APP_SANDBOX_PROXY_URI =")
+			expect(html).toContain("mcp-app-sandbox-proxy.html")
+			// Primary proxy source: the bundled proxy HTML itself, injected as a
+			// JSON string global so the webview can mount it as a blob: URL.
+			// The payload must be unicode-escaped: a raw `<` (e.g. the proxy's own
+			// closing script tag) inside an inline <script> block terminates the
+			// injection early and kills every window.* global (dev-host spike).
+			const injectionStart = html.indexOf("window.MCP_APP_SANDBOX_PROXY_HTML =")
+			expect(injectionStart).toBeGreaterThan(-1)
+			const injectedPayload = html.slice(injectionStart, html.indexOf("</script>", injectionStart))
+			expect(injectedPayload).not.toContain("<script")
+			expect(injectedPayload).toContain("\\u003c!DOCTYPE html>")
+		} finally {
+			joinPathMock.mockReset()
+		}
 	})
 })
 

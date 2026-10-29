@@ -35,6 +35,7 @@ vi.mock("fs/promises", () => {
 })
 
 // Import safeWriteJson to use in mocks
+import { safeWriteJson } from "../../../utils/safeWriteJson"
 
 // Mock safeWriteJson
 vi.mock("../../../utils/safeWriteJson", () => ({
@@ -1680,6 +1681,50 @@ describe("McpHub", () => {
 
 			const writtenConfig = JSON.parse(callToUse[1] as string)
 			expect(writtenConfig.mcpServers["test-server"].disabled).toBe(true)
+		})
+
+		it("accepts disableUi in the server config schema", () => {
+			const parsed = ServerConfigSchema.parse({ command: "node", disableUi: true })
+			expect(parsed.disableUi).toBe(true)
+			expect(ServerConfigSchema.parse({ command: "node" }).disableUi).toBeUndefined()
+		})
+
+		it("should persist the inverse of enabled when toggling server UI", async () => {
+			const mockConfig = {
+				mcpServers: {
+					"test-server": {
+						type: "stdio",
+						command: "node",
+						args: ["test.js"],
+						disabled: false,
+					},
+				},
+			}
+
+			// Every read (the config update and the in-memory refresh) sees the same on-disk config.
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(mockConfig))
+
+			// Set up mock connection (UI gating is re-checked per request, so no live client needed)
+			const mockConnection: DisconnectedMcpConnection = {
+				type: "disconnected",
+				server: {
+					name: "test-server",
+					config: JSON.stringify(mockConfig.mcpServers["test-server"]),
+					status: "disconnected",
+					source: "global",
+				},
+				client: null,
+				transport: null,
+			}
+			mcpHub.connections = [mockConnection]
+
+			await mcpHub.toggleServerUi("test-server", "global", false)
+
+			expect(safeWriteJson).toHaveBeenCalled()
+			const written = vi.mocked(safeWriteJson).mock.calls.at(-1)?.[1] as {
+				mcpServers: Record<string, { disableUi?: boolean }>
+			}
+			expect(written.mcpServers["test-server"].disableUi).toBe(true)
 		})
 
 		it("should filter out disabled servers from getServers", () => {
@@ -3440,6 +3485,155 @@ describe("McpHub", () => {
 			// Advance past timeout so the second flow resolves
 			await vi.advanceTimersByTimeAsync(OAUTH_FLOW_TIMEOUT_MS)
 			await secondFlow
+		})
+	})
+
+	describe("MCP Apps UI capability declaration", () => {
+		// Seed a single stdio server and let the constructor's initializeGlobalMcpServers()
+		// drive connectToServer(), mirroring the "should use MCP_DISABLED reason..." pattern.
+		const connectWithState = async (serverName: string, state: Record<string, unknown>) => {
+			mockProvider.getState = vi.fn().mockResolvedValue(state)
+
+			// Mock Client + StdioClientTransport with working implementations so the
+			// handshake completes (same shape as "should create connected connections").
+			const stdioModule = await import("@modelcontextprotocol/sdk/client/stdio.js")
+			const StdioClientTransport = stdioModule.StdioClientTransport as ReturnType<typeof vi.fn>
+			StdioClientTransport.mockImplementation(function () {
+				return {
+					start: vi.fn().mockResolvedValue(undefined),
+					close: vi.fn().mockResolvedValue(undefined),
+					stderr: { on: vi.fn() },
+					onerror: null,
+					onclose: null,
+				}
+			})
+
+			const clientModule = await import("@modelcontextprotocol/sdk/client/index.js")
+			const Client = clientModule.Client as ReturnType<typeof vi.fn>
+			Client.mockImplementation(function () {
+				return {
+					connect: vi.fn().mockResolvedValue(undefined),
+					close: vi.fn().mockResolvedValue(undefined),
+					getInstructions: vi.fn().mockReturnValue("test instructions"),
+					request: vi.fn().mockResolvedValue({ tools: [], resources: [], resourceTemplates: [] }),
+				}
+			})
+
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({
+					mcpServers: {
+						[serverName]: {
+							command: "node",
+							args: ["test.js"],
+						},
+					},
+				}),
+			)
+
+			const hub = new McpHub(mockProvider as ClineProvider)
+			await hub.waitUntilReady()
+			return Client
+		}
+
+		it("declares the io.modelcontextprotocol/ui extension capability when mcpAppsEnabled is true", async () => {
+			const Client = await connectWithState("ui-cap-server", { mcpEnabled: true, mcpAppsEnabled: true })
+
+			const clientOptions = Client.mock.calls.at(-1)?.[1] as { capabilities: Record<string, unknown> }
+			expect(clientOptions.capabilities.extensions).toEqual({ "io.modelcontextprotocol/ui": {} })
+		})
+
+		it("does not declare UI capability when mcpAppsEnabled is false or unset", async () => {
+			for (const state of [{ mcpEnabled: true, mcpAppsEnabled: false }, { mcpEnabled: true }]) {
+				const Client = await connectWithState("no-ui-cap-server", state)
+
+				const clientOptions = Client.mock.calls.at(-1)?.[1] as { capabilities: Record<string, unknown> }
+				expect(clientOptions.capabilities).toEqual({})
+			}
+		})
+	})
+
+	describe("handleMcpAppRequest", () => {
+		// Seed a server connection whose config JSON drives the disableUi check.
+		// The disconnected arm is used deliberately: handleMcpAppRequest never inspects
+		// connection.type (readResource/callTool enforce that and are spied here), and
+		// this keeps the double fully typed instead of adding `as any` suppressions.
+		const seedServerConnection = (name: string, config: Record<string, unknown> = {}) => {
+			mcpHub.connections = [
+				{
+					type: "disconnected",
+					server: {
+						name,
+						config: JSON.stringify(config),
+						status: "disconnected",
+					},
+					client: null,
+					transport: null,
+				},
+			]
+		}
+
+		it("handleMcpAppRequest routes resources/read to readResource", async () => {
+			seedServerConnection("test-server")
+			mockProvider.getState = vi.fn().mockResolvedValue({ mcpEnabled: true, mcpAppsEnabled: true })
+			const readSpy = vi.spyOn(mcpHub, "readResource").mockResolvedValue({
+				contents: [{ uri: "ui://demo/card", mimeType: "text/html;profile=mcp-app", text: "<html></html>" }],
+			})
+
+			const response = await mcpHub.handleMcpAppRequest({
+				requestId: "r1",
+				serverName: "test-server",
+				method: "resources/read",
+				params: { uri: "ui://demo/card" },
+			})
+
+			expect(readSpy).toHaveBeenCalledWith("test-server", "ui://demo/card", undefined)
+			expect(response.ok).toBe(true)
+		})
+
+		it("handleMcpAppRequest rejects oversized payloads with -32001 without returning content", async () => {
+			seedServerConnection("test-server")
+			mockProvider.getState = vi.fn().mockResolvedValue({ mcpEnabled: true, mcpAppsEnabled: true })
+			vi.spyOn(mcpHub, "readResource").mockResolvedValue({
+				contents: [{ uri: "ui://demo/big", text: "x".repeat(3 * 1024 * 1024) }],
+			})
+
+			const response = await mcpHub.handleMcpAppRequest({
+				requestId: "r2",
+				serverName: "test-server",
+				method: "resources/read",
+				params: { uri: "ui://demo/big" },
+			})
+
+			expect(response).toMatchObject({ ok: false, error: { code: -32001 } })
+		})
+
+		it("handleMcpAppRequest rejects when the server config sets disableUi", async () => {
+			seedServerConnection("ui-disabled-server", { disableUi: true })
+			mockProvider.getState = vi.fn().mockResolvedValue({ mcpEnabled: true, mcpAppsEnabled: true })
+
+			const response = await mcpHub.handleMcpAppRequest({
+				requestId: "r3",
+				serverName: "ui-disabled-server",
+				method: "tools/call",
+				params: { name: "anything" },
+			})
+
+			expect(response).toMatchObject({ ok: false, error: { code: -32004 } })
+		})
+
+		it("handleMcpAppRequest converts execution failures to -32603 responses", async () => {
+			seedServerConnection("test-server")
+			mockProvider.getState = vi.fn().mockResolvedValue({ mcpEnabled: true, mcpAppsEnabled: true })
+			vi.spyOn(mcpHub, "callTool").mockRejectedValue(new Error("boom"))
+
+			const response = await mcpHub.handleMcpAppRequest({
+				requestId: "r4",
+				serverName: "test-server",
+				method: "tools/call",
+				params: { name: "flaky" },
+			})
+
+			expect(response).toMatchObject({ ok: false, error: { code: -32603, message: "boom" } })
 		})
 	})
 })

@@ -180,6 +180,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 		maxOpenTabsContext,
 		maxWorkspaceFiles,
 		mcpEnabled,
+		mcpAppsEnabled,
 		soundEnabled,
 		ttsEnabled,
 		ttsSpeed,
@@ -427,6 +428,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 					terminalProfile: terminalProfile ?? "", // "" clears a saved profile; undefined is dropped by JSON.stringify
 					terminalOutputPreviewSize: terminalOutputPreviewSize ?? "medium",
 					mcpEnabled,
+					mcpAppsEnabled,
 					maxOpenTabsContext: Math.min(Math.max(0, maxOpenTabsContext ?? 20), 500),
 					maxWorkspaceFiles: Math.min(Math.max(0, maxWorkspaceFiles ?? 200), 500),
 					showRooIgnoredFiles: showRooIgnoredFiles ?? true,
@@ -920,6 +922,8 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>(({ onDone, t
 							<McpView
 								mcpEnabled={mcpEnabled}
 								setMcpEnabled={(value) => setCachedStateField("mcpEnabled", value)}
+								mcpAppsEnabled={mcpAppsEnabled}
+								setMcpAppsEnabled={(value) => setCachedStateField("mcpAppsEnabled", value)}
 							/>
 						)}
 

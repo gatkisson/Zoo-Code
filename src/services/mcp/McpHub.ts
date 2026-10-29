@@ -27,6 +27,7 @@ import type {
 	McpTool,
 	McpToolCallResponse,
 } from "@roo-code/types"
+import { isMcpServerUiDisabled } from "@roo-code/types"
 
 import { t } from "../../i18n"
 
@@ -43,6 +44,8 @@ import { arePathsEqual, getWorkspacePath } from "../../utils/path"
 import { injectVariables } from "../../utils/config"
 import { safeWriteJson } from "../../utils/safeWriteJson"
 import { sanitizeMcpName, toolNamesMatch } from "../../utils/mcp-name"
+import { MCP_APP_MAX_RESOURCE_BYTES, estimateResourceBytes, validateMcpAppRequest } from "./mcp-app-bridge"
+import type { McpAppRequest, McpAppResponsePayload } from "./mcp-app-bridge"
 
 // Discriminated union for connection states
 export type ConnectedMcpConnection = {
@@ -75,6 +78,8 @@ const BaseConfigSchema = z.object({
 	alwaysAllow: z.array(z.string()).default([]),
 	watchPaths: z.array(z.string()).optional(), // paths to watch for changes and restart server
 	disabledTools: z.array(z.string()).default([]),
+	// Opt this server out of MCP Apps UI rendering (see docs/architecture/mcp-apps-ui-support.md).
+	disableUi: z.boolean().optional(),
 })
 
 // Custom error messages for better user feedback
@@ -691,6 +696,19 @@ export class McpHub {
 		return state.mcpEnabled ?? true
 	}
 
+	/**
+	 * Checks if MCP Apps UI support is globally enabled (opt-in feature flag).
+	 * @returns Promise<boolean> indicating if the UI extension capability should be declared
+	 */
+	private async isMcpAppsEnabled(): Promise<boolean> {
+		const provider = this.providerRef.deref()
+		if (!provider) {
+			return false
+		}
+		const state = await provider.getState()
+		return state.mcpAppsEnabled ?? false
+	}
+
 	private async connectToServer(
 		name: string,
 		config: z.infer<typeof ServerConfigSchema>,
@@ -725,13 +743,14 @@ export class McpHub {
 
 		let pendingAuthProvider: McpOAuthClientProvider | undefined
 		try {
+			const mcpAppsEnabled = await this.isMcpAppsEnabled()
 			const client = new Client(
 				{
 					name: "Roo Code",
 					version: this.providerRef.deref()?.context.extension?.packageJSON?.version ?? "1.0.0",
 				},
 				{
-					capabilities: {},
+					capabilities: mcpAppsEnabled ? { extensions: { "io.modelcontextprotocol/ui": {} } } : {},
 				},
 			)
 
@@ -1977,6 +1996,29 @@ export class McpHub {
 	}
 
 	/**
+	 * Persist the per-server `disableUi` flag and keep the in-memory config
+	 * string fresh so host-side re-validation (handleMcpAppRequest) sees it.
+	 */
+	public async toggleServerUi(serverName: string, source: "global" | "project", enabled: boolean): Promise<void> {
+		const connection = this.findConnection(serverName, source)
+		if (!connection) {
+			throw new Error(`Server ${serverName}${source ? ` with source ${source}` : ""} not found`)
+		}
+
+		const serverSource = connection.server.source || "global"
+		await this.updateServerConfig(serverName, { disableUi: !enabled }, serverSource)
+
+		try {
+			const updatedConfig = await this.readServerConfigFromFile(serverName, serverSource)
+			connection.server.config = JSON.stringify(updatedConfig)
+		} catch (error) {
+			console.error(`Failed to refresh in-memory config for ${serverName}:`, error)
+		}
+
+		await this.notifyWebviewOfServerChanges()
+	}
+
+	/**
 	 * Helper method to read a server's configuration from the appropriate settings file
 	 * @param serverName The name of the server to read
 	 * @param source Whether to read from the global or project config
@@ -2314,6 +2356,48 @@ export class McpHub {
 				}
 			}
 			throw error
+		}
+	}
+
+	/**
+	 * Serve a webview-initiated MCP Apps request (Flow 1/2 in
+	 * docs/architecture/mcp-apps-ui-support.md). Re-validates everything the
+	 * webview gate already checked; readResource/callTool additionally enforce
+	 * connection + server-disabled state.
+	 */
+	async handleMcpAppRequest(request: McpAppRequest): Promise<McpAppResponsePayload> {
+		try {
+			const connection = this.findConnection(request.serverName, request.source)
+			const uiDisabled = isMcpServerUiDisabled(connection?.server) || !(await this.isMcpAppsEnabled())
+
+			const validation = validateMcpAppRequest(request, { uiDisabled })
+			if (!validation.ok) {
+				return { ok: false, error: { code: validation.code, message: validation.message } }
+			}
+
+			if (request.method === "resources/read") {
+				const uri = String(request.params?.uri ?? "")
+				const result = await this.readResource(request.serverName, uri, request.source)
+
+				if (estimateResourceBytes(result) > MCP_APP_MAX_RESOURCE_BYTES) {
+					return { ok: false, error: { code: -32001, message: "UI resource exceeds the 2MB size cap" } }
+				}
+
+				return { ok: true, result }
+			}
+
+			const result = await this.callTool(
+				request.serverName,
+				String(request.params?.name ?? ""),
+				request.params?.arguments as Record<string, unknown> | undefined,
+				request.source,
+			)
+			return { ok: true, result }
+		} catch (error) {
+			return {
+				ok: false,
+				error: { code: -32603, message: error instanceof Error ? error.message : String(error) },
+			}
 		}
 	}
 

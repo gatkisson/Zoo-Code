@@ -78,6 +78,7 @@ async function main() {
 							["node_modules/vscode-material-icons/generated", "assets/vscode-material-icons"],
 							["../webview-ui/audio", "webview-ui/audio"],
 							["assets/marketplace", "dist/assets/marketplace"],
+							["assets/mcp-app-sandbox-proxy.html", "dist/assets/mcp-app-sandbox-proxy.html"],
 						],
 						srcDir,
 						buildDir,

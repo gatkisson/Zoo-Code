@@ -54,6 +54,8 @@ export const DEFAULT_COLLAPSE_COMMAND_OUTPUT_BY_DEFAULT = false
 
 export const DEFAULT_DESTRUCTIVE_COMMAND_GUARD_ENABLED = false
 
+export const DEFAULT_MCP_APPS_ENABLED = false
+
 /**
  * Whether commands that are not explicitly auto-approved are automatically
  * denied (with a structured reason sent to the model) instead of prompting the
@@ -265,6 +267,11 @@ export const globalSettingsSchema = z.object({
 	telemetrySetting: telemetrySettingsSchema.optional(),
 
 	mcpEnabled: z.boolean().optional(),
+	/**
+	 * Opt-in rendering of MCP Apps interactive UIs (untrusted third-party HTML).
+	 * @default false
+	 */
+	mcpAppsEnabled: z.boolean().optional(),
 
 	mode: z.string().optional(),
 	modeApiConfigs: z.record(z.string(), z.string()).optional(),

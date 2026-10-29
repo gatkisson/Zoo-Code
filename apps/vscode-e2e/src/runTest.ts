@@ -16,6 +16,7 @@ import { addLongRuningSilentCommandFixtures } from "./fixtures/long-running-sile
 import { addColdShellInitFixtures } from "./fixtures/cold-shell-init"
 import { addTerminalProfileResultFixtures } from "./fixtures/terminal-profile"
 import { addListFilesResultFixtures } from "./fixtures/list-files"
+import { addMcpAppsFixtures } from "./fixtures/mcp-apps"
 import { addReadFileResultFixtures } from "./fixtures/read-file"
 import { addSearchFilesResultFixtures } from "./fixtures/search-files"
 import { addSubtaskFixtures } from "./fixtures/subtasks"
@@ -137,6 +138,7 @@ async function main() {
 				addColdShellInitFixtures(mock)
 				addTerminalProfileResultFixtures(mock)
 				addListFilesResultFixtures(mock)
+				addMcpAppsFixtures(mock)
 				addReadFileResultFixtures(mock)
 				addSearchFilesResultFixtures(mock)
 				addSubtaskFixtures(mock)

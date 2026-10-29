@@ -30,6 +30,7 @@ import {
 	RouterModelsMessageType,
 	VsCodeLmModelsMessageType,
 	isTelemetryOptedIn,
+	DEFAULT_MCP_APPS_ENABLED,
 } from "@roo-code/types"
 import { customToolRegistry } from "@roo-code/core"
 import { CloudService } from "@roo-code/cloud"
@@ -851,6 +852,19 @@ export const webviewMessageHandler = async (
 
 						if (mcpHub) {
 							await mcpHub.handleMcpEnabledChange(newValue as boolean)
+						}
+					} else if (key === "mcpAppsEnabled") {
+						const previousValue = getGlobalState("mcpAppsEnabled") ?? DEFAULT_MCP_APPS_ENABLED
+						newValue = value ?? false
+
+						// Capabilities are negotiated at connect time; refresh connections only when
+						// the value actually changed so unrelated settings saves don't reconnect servers.
+						if (newValue !== previousValue) {
+							const mcpHub = provider.getMcpHub()
+
+							if (mcpHub) {
+								await mcpHub.refreshAllConnections()
+							}
 						}
 					} else if (key === "experiments") {
 						if (!value) {
@@ -2031,6 +2045,22 @@ export const webviewMessageHandler = async (
 			}
 			break
 		}
+		case "toggleMcpServerUi": {
+			try {
+				await provider
+					.getMcpHub()
+					?.toggleServerUi(
+						message.serverName!,
+						message.source as "global" | "project",
+						Boolean(message.isEnabled),
+					)
+			} catch (error) {
+				provider.log(
+					`Failed to toggle UI for MCP server ${message.serverName}: ${JSON.stringify(error, Object.getOwnPropertyNames(error), 2)}`,
+				)
+			}
+			break
+		}
 		case "taskSyncEnabled":
 			provider.log("Ignoring taskSyncEnabled update because cloud task sync is disabled")
 			break
@@ -2040,6 +2070,28 @@ export const webviewMessageHandler = async (
 
 			if (mcpHub) {
 				await mcpHub.refreshAllConnections()
+			}
+
+			break
+		}
+
+		case "mcpAppRequest": {
+			const mcpHub = provider.getMcpHub()
+
+			if (mcpHub && message.requestId && message.serverName && message.mcpAppMethod) {
+				const response = await mcpHub.handleMcpAppRequest({
+					requestId: message.requestId,
+					serverName: message.serverName,
+					source: message.source,
+					method: message.mcpAppMethod,
+					params: message.mcpAppParams,
+				})
+
+				await provider.postMessageToWebview({
+					type: "mcpAppResponse",
+					requestId: message.requestId,
+					mcpAppResponse: response,
+				})
 			}
 
 			break

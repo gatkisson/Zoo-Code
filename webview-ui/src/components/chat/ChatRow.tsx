@@ -51,6 +51,7 @@ import { InProgressRow, CondensationResultRow, CondensationErrorRow, TruncationR
 import CodebaseSearchResultsDisplay from "./CodebaseSearchResultsDisplay"
 import { appendImages } from "@src/utils/imageUtils"
 import { McpExecution } from "./McpExecution"
+import McpAppFrame from "./McpAppFrame"
 import { ChatTextArea } from "./ChatTextArea"
 import { MAX_IMAGES_PER_MESSAGE } from "./constants"
 import { useSelectedModel } from "../ui/hooks/useSelectedModel"
@@ -190,6 +191,7 @@ export const ChatRowContent = ({
 	const {
 		mcpServers,
 		alwaysAllowMcp,
+		mcpAppsEnabled,
 		currentCheckpoint,
 		mode,
 		apiConfiguration,
@@ -1692,6 +1694,25 @@ export const ChatRowContent = ({
 										server={server}
 										useMcpServer={useMcpServer}
 										alwaysAllowMcp={alwaysAllowMcp}
+									/>
+								)}
+								{mcpAppsEnabled && useMcpServer.type === "use_mcp_tool" && (
+									<McpAppFrame
+										serverName={useMcpServer.serverName}
+										source={server?.source ?? "global"}
+										toolName={useMcpServer.toolName ?? ""}
+										toolMeta={
+											server?.tools?.find((tool) => tool.name === useMcpServer.toolName)?._meta
+										}
+										resultMeta={undefined} // v1: result _meta plumbing is a follow-up (plan Task 9 Step 4 note)
+										argumentsJson={useMcpServer.arguments}
+										responseText={useMcpServer.response}
+										alwaysAllow={
+											server?.tools?.find((tool) => tool.name === useMcpServer.toolName)
+												?.alwaysAllow
+										}
+										alwaysAllowMcp={alwaysAllowMcp}
+										server={server}
 									/>
 								)}
 							</div>

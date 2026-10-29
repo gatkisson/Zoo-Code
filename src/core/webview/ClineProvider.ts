@@ -47,6 +47,7 @@ import {
 	DEFAULT_WRITE_DELAY_MS,
 	DEFAULT_DIFF_FUZZY_THRESHOLD,
 	DEFAULT_DESTRUCTIVE_COMMAND_GUARD_ENABLED,
+	DEFAULT_MCP_APPS_ENABLED,
 	DEFAULT_ALWAYS_DENY_UNAPPROVED_COMMANDS,
 	DEFAULT_COLLAPSE_COMMAND_OUTPUT_BY_DEFAULT,
 	DEFAULT_AUTO_CLOSE_ZOO_OPENED_FILES,
@@ -188,6 +189,52 @@ function scheduleTask(
 		}
 	})
 }
+
+// Bundled MCP Apps sandbox proxy HTML, read once at module load. The webview
+// mounts it as a blob: document (the asWebviewUri route is unreachable from
+// iframe navigations in desktop VS Code; dev-host spike findings), so the file
+// lives next to the extension bundle in every packaging layout.
+function readMcpAppSandboxProxyHtml(): string {
+	const candidates = [
+		path.join(__dirname, "..", "assets", "mcp-app-sandbox-proxy.html"), // dist/extension.js -> src/assets (dev + spike)
+		path.join(__dirname, "..", "..", "assets", "mcp-app-sandbox-proxy.html"), // core/webview source tree -> src/assets (tests)
+		path.join(__dirname, "assets", "mcp-app-sandbox-proxy.html"), // packaged fallback
+	]
+	for (const candidate of candidates) {
+		try {
+			// Normalize CRLF -> LF: the browser's HTML parser normalizes newlines
+			// in script data, so the sha256 below must be computed over the LF
+			// form or the hash will not match the executed bytes (dev-host spike:
+			// a CRLF checkout made the relay script violate the inherited CSP).
+			const raw = require("fs").readFileSync(candidate, "utf8") as string
+			return raw.replace(/\r\n/g, "\n")
+		} catch {
+			// Try the next layout.
+		}
+	}
+	console.error("[ClineProvider] MCP Apps sandbox proxy HTML not found; MCP App frames will stay disabled.")
+	return ""
+}
+
+const mcpAppSandboxProxyHtml = readMcpAppSandboxProxyHtml()
+
+// SHA-256 hash of the proxy's inline script as a script-src expression.
+// Opaque-origin frames (blob:, srcdoc) inherit the webview's delivered CSP in
+// Chromium, so the trusted relay script is admitted by hash while hostile app
+// HTML inside the proxy stays governed only by the proxy's own meta-CSP.
+const mcpAppProxyScriptHash = (() => {
+	const script = mcpAppSandboxProxyHtml.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? ""
+	return `'sha256-${crypto.createHash("sha256").update(script, "utf8").digest("base64")}'`
+})()
+
+// JSON string literal for embedding the proxy HTML inside an inline <script>
+// block. Every `<` is escaped to its unicode form so the proxy's own closing
+// script tag cannot
+// terminate the injection block early (dev-host spike: a raw closing script tag inside
+// the JSON payload broke the whole injection script, leaving every window.*
+// global unset). The JS parser decodes the escapes, so the runtime value is
+// byte-identical to the file contents.
+const mcpAppSandboxProxyHtmlJson = JSON.stringify(mcpAppSandboxProxyHtml).replace(/</g, "\\u003c")
 
 // Keys a model-selector patch may touch: model IDs plus settings reset on model change.
 const PROFILE_MODEL_ID_PATCH_KEYS: ReadonlySet<string> = new Set(modelIdKeys)
@@ -1572,6 +1619,10 @@ export class ClineProvider
 		])
 		const imagesUri = getUri(webview, this.contextProxy.extensionUri, ["assets", "images"])
 		const audioUri = getUri(webview, this.contextProxy.extensionUri, ["webview-ui", "audio"])
+		const mcpAppSandboxProxyUri = getUri(webview, this.contextProxy.extensionUri, [
+			"assets",
+			"mcp-app-sandbox-proxy.html",
+		])
 
 		const file = "src/index.tsx"
 		const scriptUri = `http://${localServerUrl}/${file}`
@@ -1588,11 +1639,17 @@ export class ClineProvider
 
 		const csp = [
 			"default-src 'none'",
+			// blob: covers the MCP Apps sandbox proxy mounted as a blob document
+			// (dev-host spike: iframe navigations to the asWebviewUri CDN route do
+			// not resolve in desktop VS Code, so the proxy mounts from a blob: URL).
+			`frame-src ${webview.cspSource} blob:`,
 			`font-src ${webview.cspSource} data:`,
 			`style-src ${webview.cspSource} 'unsafe-inline' https://* http://${localServerUrl} http://0.0.0.0:${localPort}`,
 			`img-src ${webview.cspSource} https://storage.googleapis.com https://img.clerk.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com data:`,
 			`media-src ${webview.cspSource}`,
-			`script-src 'unsafe-eval' ${webview.cspSource} https://*.posthog.com http://${localServerUrl} http://0.0.0.0:${localPort} 'nonce-${nonce}'`,
+			// The MCP Apps sandbox proxy runs as a blob: document that inherits
+			// this policy; its bundled inline relay script is admitted by hash.
+			`script-src 'unsafe-eval' ${webview.cspSource} ${mcpAppProxyScriptHash} https://*.posthog.com http://${localServerUrl} http://0.0.0.0:${localPort} 'nonce-${nonce}'`,
 			`connect-src ${webview.cspSource} ${openRouterDomain} https://* https://*.posthog.com ws://${localServerUrl} ws://0.0.0.0:${localPort} http://${localServerUrl} http://0.0.0.0:${localPort}`,
 		]
 
@@ -1609,6 +1666,8 @@ export class ClineProvider
 						window.IMAGES_BASE_URI = "${imagesUri}"
 						window.AUDIO_BASE_URI = "${audioUri}"
 						window.MATERIAL_ICONS_BASE_URI = "${materialIconsUri}"
+						window.MCP_APP_SANDBOX_PROXY_URI = "${mcpAppSandboxProxyUri}"
+						window.MCP_APP_SANDBOX_PROXY_HTML = ${mcpAppSandboxProxyHtmlJson}
 					</script>
 					<title>Zoo Code</title>
 				</head>
@@ -1653,6 +1712,10 @@ export class ClineProvider
 		])
 		const imagesUri = getUri(webview, this.contextProxy.extensionUri, ["assets", "images"])
 		const audioUri = getUri(webview, this.contextProxy.extensionUri, ["webview-ui", "audio"])
+		const mcpAppSandboxProxyUri = getUri(webview, this.contextProxy.extensionUri, [
+			"assets",
+			"mcp-app-sandbox-proxy.html",
+		])
 
 		// Use a nonce to only allow a specific script to be run.
 		/*
@@ -1681,13 +1744,15 @@ export class ClineProvider
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no">
             <meta name="theme-color" content="#000000">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; font-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} https://storage.googleapis.com https://img.clerk.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com data:; media-src ${webview.cspSource}; script-src ${webview.cspSource} 'wasm-unsafe-eval' 'nonce-${nonce}' 'strict-dynamic'; connect-src ${webview.cspSource} ${openRouterDomain} https://api.requesty.ai https://us.i.posthog.com;">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src ${webview.cspSource} blob:; font-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} https://storage.googleapis.com https://img.clerk.com https://avatars.githubusercontent.com https://lh3.googleusercontent.com data:; media-src ${webview.cspSource}; script-src ${webview.cspSource} ${mcpAppProxyScriptHash} 'wasm-unsafe-eval' 'nonce-${nonce}' 'strict-dynamic'; connect-src ${webview.cspSource} ${openRouterDomain} https://api.requesty.ai https://us.i.posthog.com;">
             <link rel="stylesheet" type="text/css" href="${stylesUri}">
 			<link href="${codiconsUri}" rel="stylesheet" />
 			<script nonce="${nonce}">
 				window.IMAGES_BASE_URI = "${imagesUri}"
 				window.AUDIO_BASE_URI = "${audioUri}"
 				window.MATERIAL_ICONS_BASE_URI = "${materialIconsUri}"
+				window.MCP_APP_SANDBOX_PROXY_URI = "${mcpAppSandboxProxyUri}"
+				window.MCP_APP_SANDBOX_PROXY_HTML = ${mcpAppSandboxProxyHtmlJson}
 			</script>
             <title>Zoo Code</title>
           </head>
@@ -2788,6 +2853,7 @@ export class ClineProvider
 			terminalZdotdir,
 			terminalProfile,
 			mcpEnabled,
+			mcpAppsEnabled,
 			currentApiConfigName,
 			listApiConfigMeta,
 			pinnedApiConfigs,
@@ -2962,6 +3028,7 @@ export class ClineProvider
 			terminalZdotdir: terminalZdotdir ?? false,
 			terminalProfile,
 			mcpEnabled: mcpEnabled ?? true,
+			mcpAppsEnabled: mcpAppsEnabled ?? DEFAULT_MCP_APPS_ENABLED,
 			currentApiConfigName: currentTask ? currentTaskApiConfigName : currentApiConfigName,
 			listApiConfigMeta: listApiConfigMeta ?? [],
 			pinnedApiConfigs: pinnedApiConfigs ?? {},
@@ -3202,6 +3269,7 @@ export class ClineProvider
 			mode: stateValues.mode ?? defaultModeSlug,
 			language: stateValues.language ?? formatLanguage(vscode.env.language),
 			mcpEnabled: stateValues.mcpEnabled ?? true,
+			mcpAppsEnabled: stateValues.mcpAppsEnabled ?? DEFAULT_MCP_APPS_ENABLED,
 			mcpServers: this.mcpHub?.getAllServers() ?? [],
 			currentApiConfigName: stateValues.currentApiConfigName ?? "default",
 			listApiConfigMeta: stateValues.listApiConfigMeta ?? [],

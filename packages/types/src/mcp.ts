@@ -67,12 +67,23 @@ export type McpServer = {
 	instructions?: string
 }
 
+/**
+ * MCP Apps UI metadata. Standard key is `_meta.ui.resourceUri`; legacy MCP-UI
+ * servers use the flat key `_meta["ui/resourceUri"]`. See
+ * docs/architecture/mcp-apps-ui-support.md.
+ */
+export type McpToolUiMeta = {
+	ui?: { resourceUri?: string }
+	"ui/resourceUri"?: string
+}
+
 export type McpTool = {
 	name: string
 	description?: string
 	inputSchema?: object
 	alwaysAllow?: boolean
 	enabledForPrompt?: boolean
+	_meta?: McpToolUiMeta & Record<string, unknown>
 }
 
 export type McpResource = {
@@ -183,4 +194,44 @@ export function countEnabledMcpTools(servers: McpServer[]): EnabledMcpToolsCount
 	}
 
 	return { enabledToolCount: toolCount, enabledServerCount: serverCount }
+}
+
+/**
+ * Extract the MCP Apps UI resource URI from a tool's (or tool result's) `_meta`.
+ * Nested `ui.resourceUri` takes precedence over legacy `ui/resourceUri`,
+ * mirroring `getToolUiResourceUri` in @modelcontextprotocol/ext-apps 1.x.
+ */
+export function getMcpToolUiResourceUri(meta: Record<string, unknown> | undefined): string | undefined {
+	if (!meta || typeof meta !== "object") {
+		return undefined
+	}
+
+	const nested = (meta as McpToolUiMeta).ui?.resourceUri
+	if (typeof nested === "string" && nested.length > 0) {
+		return nested
+	}
+
+	const legacy = (meta as McpToolUiMeta)["ui/resourceUri"]
+	if (typeof legacy === "string" && legacy.length > 0) {
+		return legacy
+	}
+
+	return undefined
+}
+
+/**
+ * Whether an MCP server opted out of UI rendering via `disableUi` in its
+ * mcp.json entry. The config arrives as the raw JSON string on McpServer.config.
+ */
+export function isMcpServerUiDisabled(server: { config?: string } | undefined): boolean {
+	if (!server?.config) {
+		return false
+	}
+
+	try {
+		const parsed = JSON.parse(server.config) as { disableUi?: unknown }
+		return parsed?.disableUi === true
+	} catch {
+		return false
+	}
 }

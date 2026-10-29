@@ -1905,6 +1905,136 @@ describe("webviewMessageHandler - mcpEnabled", () => {
 	})
 })
 
+describe("webviewMessageHandler - mcpAppsEnabled", () => {
+	let mockMcpHub: {
+		handleMcpEnabledChange: ReturnType<typeof vi.fn>
+		refreshAllConnections: ReturnType<typeof vi.fn>
+	}
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+
+		// Create a mock McpHub instance
+		mockMcpHub = {
+			handleMcpEnabledChange: vi.fn().mockResolvedValue(undefined),
+			refreshAllConnections: vi.fn().mockResolvedValue(undefined),
+		}
+
+		// Ensure provider exposes getMcpHub and returns our mock
+		mockClineProvider.getMcpHub = vi.fn().mockReturnValue(mockMcpHub)
+	})
+
+	it("refreshes MCP connections when mcpAppsEnabled changes", async () => {
+		vi.mocked(mockClineProvider.contextProxy.getValue).mockImplementation((key: string) =>
+			key === "mcpAppsEnabled" ? false : undefined,
+		)
+
+		await webviewMessageHandler(mockClineProvider, {
+			type: "updateSettings",
+			updatedSettings: { mcpAppsEnabled: true },
+		})
+
+		expect(mockMcpHub.refreshAllConnections).toHaveBeenCalledTimes(1)
+		expect(mockClineProvider.contextProxy.setValue).toHaveBeenCalledWith("mcpAppsEnabled", true)
+		expect(mockClineProvider.postStateToWebview).toHaveBeenCalledTimes(1)
+	})
+
+	it("does not refresh MCP connections when mcpAppsEnabled is unchanged", async () => {
+		// handleSubmit posts the full settings payload on every save; an unrelated
+		// save must not reconnect all servers when the value did not change.
+		vi.mocked(mockClineProvider.contextProxy.getValue).mockImplementation((key: string) =>
+			key === "mcpAppsEnabled" ? true : undefined,
+		)
+
+		await webviewMessageHandler(mockClineProvider, {
+			type: "updateSettings",
+			updatedSettings: { mcpAppsEnabled: true },
+		})
+
+		expect(mockMcpHub.refreshAllConnections).not.toHaveBeenCalled()
+		expect(mockClineProvider.contextProxy.setValue).toHaveBeenCalledWith("mcpAppsEnabled", true)
+	})
+})
+
+describe("webviewMessageHandler - toggleMcpServerUi", () => {
+	let mockMcpHub: { toggleServerUi: ReturnType<typeof vi.fn> }
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+
+		mockMcpHub = { toggleServerUi: vi.fn().mockResolvedValue(undefined) }
+		mockClineProvider.getMcpHub = vi.fn().mockReturnValue(mockMcpHub)
+	})
+
+	it("delegates the per-server UI toggle to McpHub", async () => {
+		await webviewMessageHandler(mockClineProvider, {
+			type: "toggleMcpServerUi",
+			serverName: "test-server",
+			source: "project",
+			isEnabled: false,
+		})
+
+		expect(mockMcpHub.toggleServerUi).toHaveBeenCalledWith("test-server", "project", false)
+	})
+
+	it("logs instead of throwing when the per-server UI toggle fails", async () => {
+		mockMcpHub.toggleServerUi.mockRejectedValue(new Error("server not found"))
+
+		await webviewMessageHandler(mockClineProvider, {
+			type: "toggleMcpServerUi",
+			serverName: "test-server",
+			source: "global",
+			isEnabled: true,
+		})
+
+		expect(mockMcpHub.toggleServerUi).toHaveBeenCalledWith("test-server", "global", true)
+		expect(mockClineProvider.log).toHaveBeenCalledWith(
+			expect.stringContaining("Failed to toggle UI for MCP server test-server"),
+		)
+	})
+})
+
+describe("webviewMessageHandler - mcpAppRequest", () => {
+	let mockMcpHub: { handleMcpAppRequest: ReturnType<typeof vi.fn> }
+
+	beforeEach(() => {
+		vi.clearAllMocks()
+
+		mockMcpHub = { handleMcpAppRequest: vi.fn().mockResolvedValue({ ok: true, result: { contents: [] } }) }
+		mockClineProvider.getMcpHub = vi.fn().mockReturnValue(mockMcpHub)
+	})
+
+	it("routes the request to McpHub and posts a correlated mcpAppResponse", async () => {
+		await webviewMessageHandler(mockClineProvider, {
+			type: "mcpAppRequest",
+			requestId: "req-42",
+			serverName: "srv",
+			mcpAppMethod: "resources/read",
+			mcpAppParams: { uri: "ui://demo/card" },
+		})
+
+		expect(mockMcpHub.handleMcpAppRequest).toHaveBeenCalledWith({
+			requestId: "req-42",
+			serverName: "srv",
+			source: undefined,
+			method: "resources/read",
+			params: { uri: "ui://demo/card" },
+		})
+		expect(mockClineProvider.postMessageToWebview).toHaveBeenCalledWith({
+			type: "mcpAppResponse",
+			requestId: "req-42",
+			mcpAppResponse: { ok: true, result: { contents: [] } },
+		})
+	})
+
+	it("ignores requests without a requestId or serverName", async () => {
+		await webviewMessageHandler(mockClineProvider, { type: "mcpAppRequest", mcpAppMethod: "tools/call" })
+
+		expect(mockMcpHub.handleMcpAppRequest).not.toHaveBeenCalled()
+		expect(mockClineProvider.postMessageToWebview).not.toHaveBeenCalled()
+	})
+})
+
 describe("webviewMessageHandler - destructiveCommandGuardEnabled", () => {
 	beforeEach(() => {
 		vi.clearAllMocks()
