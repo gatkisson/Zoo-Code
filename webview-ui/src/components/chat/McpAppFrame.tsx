@@ -47,7 +47,7 @@ function getProxyBlobUrl(html: string): string {
 // final; they are reserved for future app context seeding) but are not
 // destructured yet to satisfy no-unused-vars. alwaysAllow/alwaysAllowMcp feed the
 // Task 10 approval gate below.
-export const McpAppFrame = ({
+const McpAppFrame = ({
 	serverName,
 	source,
 	toolName,
@@ -195,8 +195,7 @@ export const McpAppFrame = ({
 			// Apps report size via the JSON-RPC notification `method` field relayed
 			// verbatim by the sandbox proxy; `type` is accepted for tolerance.
 			const data = event.data as
-				| { type?: string; method?: string; height?: number; params?: { height?: number } }
-				| undefined
+				{ type?: string; method?: string; height?: number; params?: { height?: number } } | undefined
 			if (!data) {
 				return
 			}
